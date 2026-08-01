@@ -1,0 +1,22 @@
+# Secrets / identifiants
+.env
+.env.*
+!.env.example
+ 
+# Environnement virtuel Python
+venv/
+__pycache__/
+*.pyc
+ 
+# Données personnelles (vos cartes exportées)
+data/
+*.csv
+ 
+# Schéma GraphQL téléchargé (gros fichier, régénérable via curl)
+schema.graphql
+ 
+# Fichiers Windows Zone.Identifier (résidus de téléchargement)
+*:Zone.Identifier
+ 
+# IDE
+.vscode/
