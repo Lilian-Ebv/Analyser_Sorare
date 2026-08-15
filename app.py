@@ -1,7 +1,7 @@
 """
 Application Streamlit : explore et filtre vos cartes Sorare.
 
-Les données viennent de data/cards.csv, généré en lançant :
+Les données viennent de data/sorare.db (SQLite), généré en lançant :
     python -m src.main
 
 Lancement de l'app :
@@ -9,35 +9,33 @@ Lancement de l'app :
 """
 
 import os
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
+from src import db
 from src.analysis import cards_to_dataframe, eligible_leagues
 from src.api_client import SorareClient
 from src.auth import SorareAuthError, complete_sign_in, start_sign_in
-from src.floor_price import compute_floor_price, fetch_floor_prices_by_player
-from src.main import DATA_DIR, FETCH_RARITIES, fetch_all_cards
+from src.floor_price import compute_floor_price, fetch_eth_eur_cents, fetch_floor_prices_by_player
+from src.main import FETCH_RARITIES, fetch_all_cards
 from src.queries import GET_CURRENT_USER, GET_EXCHANGE_RATE, SEARCH_PLAYER_CARDS
 
 load_dotenv()
-
-DATA_FILE = Path("data/cards.csv")
 
 st.set_page_config(page_title="Sorare Analyzer", layout="wide", page_icon="⚽")
 
 
 @st.cache_data
-def load_data(path: Path, mtime: float) -> pd.DataFrame:
+def load_data(mtime: float | None) -> pd.DataFrame:
     """
-    Charge le CSV. `mtime` (date de modification du fichier) fait partie de
-    la clé de cache : si vous relancez `python -m src.main` et régénérez le
-    fichier, le cache est automatiquement invalidé au prochain rechargement
-    de la page.
+    Charge les cartes depuis SQLite. `mtime` (date de modification du
+    fichier .db) fait partie de la clé de cache : si vous relancez
+    `python -m src.main` et régénérez la base, le cache est automatiquement
+    invalidé au prochain rechargement de la page.
     """
-    return pd.read_csv(path)
+    return db.load_cards()
 
 
 def format_countdown(end_dt: pd.Timestamp) -> str:
@@ -87,7 +85,8 @@ def fetch_and_save(jwt_token: str) -> int:
             .itertuples(index=False, name=None)
         )
         players = list(players)
-        floor_data = fetch_floor_prices_by_player(client, players)
+        eth_eur_cents = fetch_eth_eur_cents(client)
+        floor_data = fetch_floor_prices_by_player(client, players, eth_eur_cents=eth_eur_cents)
         new_df["floor_price_eur"] = new_df.apply(
             lambda row: compute_floor_price(
                 row["player_name"],
@@ -99,8 +98,7 @@ def fetch_and_save(jwt_token: str) -> int:
             axis=1,
         )
 
-    DATA_DIR.mkdir(exist_ok=True)
-    new_df.to_csv(DATA_FILE, index=False)
+    db.save_cards(new_df)
     return len(new_df)
 
 
@@ -386,7 +384,7 @@ if "market_search_results" in st.session_state:
         st.json(st.session_state.market_search_raw)
     st.divider()
 
-if not DATA_FILE.exists():
+if not db.DB_FILE.exists():
     st.warning(
         "Aucune donnée trouvée. Lancez d'abord `python -m src.main` dans "
         "votre terminal (avec la connexion Sorare + le 2FA), puis rechargez "
@@ -394,9 +392,21 @@ if not DATA_FILE.exists():
     )
     st.stop()
 
-df = load_data(DATA_FILE, DATA_FILE.stat().st_mtime)
+df = load_data(db.last_updated())
+if df.empty:
+    st.warning(
+        "La base de données existe mais ne contient aucune carte. "
+        "Relancez `python -m src.main`."
+    )
+    st.stop()
+
 df["next_game_date"] = pd.to_datetime(df["next_game_date"], errors="coerce", utc=True)
 df["next_gameweek_deadline"] = pd.to_datetime(df["next_gameweek_deadline"], errors="coerce", utc=True)
+
+# SQLite n'a pas de vrai type booléen : ces colonnes reviennent en 0/1,
+# on les reconvertit explicitement.
+for bool_col in ["u23_eligible", "sealed", "in_season"]:
+    df[bool_col] = df[bool_col].astype(bool)
 
 # --- Filtres (barre latérale) -----------------------------------------
 st.sidebar.header("🔍 Filtres")

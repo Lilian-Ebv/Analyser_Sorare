@@ -1,11 +1,12 @@
 """
-Diagnostic : teste plusieurs noms de champ de tri (sorts) pour trouver
-lequel permet de trier les résultats de recherche par prix croissant.
+Diagnostic : teste la recherche floor price avec la logique
+"existence d'offre" pour un joueur donné.
 
 Usage :
-    python -m src.debug_floor_search "Pedri"
+    python -m src.debug_floor_search "Lammens"
 """
 
+import json
 import os
 import sys
 
@@ -13,29 +14,10 @@ from dotenv import load_dotenv
 
 from src.api_client import SorareClient
 from src.auth import sign_in
+from src.floor_price import _resolve_confirmed_price, fetch_eth_eur_cents
+from src.queries import PLAYER_FLOOR_SEARCH
 
 load_dotenv()
-
-CANDIDATE_SORT_FIELDS = [
-    "price",
-    "salePrice",
-    "sale.price",
-    "amount",
-    "currentPrice",
-    "minPrice",
-]
-
-QUERY_TEMPLATE = """
-query TestSort($query: String!, $field: String!) {
-  searchCards(query: $query, onSaleOnly: true, pageSize: 10, sorts: [{field: $field, direction: ASC}]) {
-    hits {
-      rarity
-      season
-      sale { price }
-    }
-  }
-}
-"""
 
 
 def main():
@@ -46,15 +28,31 @@ def main():
     jwt_token = sign_in(email, password)
     client = SorareClient(jwt_token)
 
-    for field in CANDIDATE_SORT_FIELDS:
-        print(f"\n🔍 Test du tri par '{field}'...")
-        try:
-            data = client.execute(QUERY_TEMPLATE, {"query": name, "field": field})
-            hits = data["searchCards"]["hits"]
-            prices = [h["sale"]["price"] for h in hits if h.get("sale")]
-            print(f"   Prix obtenus (devrait être croissant) : {prices}")
-        except Exception as e:
-            print(f"   ❌ Erreur : {e}")
+    eth_eur_cents = fetch_eth_eur_cents(client)
+
+    print(f"\n🔍 Recherche floor price pour '{name}' (triée par prix)...\n")
+    data = client.execute(PLAYER_FLOOR_SEARCH, {"query": name})
+    hits = data["searchCards"]["hits"]
+
+    for hit in hits[:15]:
+        card = hit.get("card") or {}
+        player_slug = (card.get("anyPlayer") or {}).get("slug")
+        index_price = (hit.get("sale") or {}).get("price")
+        index_price_eur = index_price / 100 if index_price is not None else None
+        offer_exists = card.get("liveSingleSaleOffer") is not None
+
+        if index_price_eur is None:
+            confirmed = None
+        else:
+            confirmed = _resolve_confirmed_price(card, index_price_eur, eth_eur_cents)
+
+        status = "✅ CONFIRMÉ" if confirmed is not None else "❌ PÉRIMÉ"
+        print(
+            f"{hit.get('rarity'):12} {hit.get('season')} | "
+            f"index={index_price_eur}€  confirmé={confirmed}€  "
+            f"in_season={card.get('inSeasonEligible')}  "
+            f"offre_existe={offer_exists}  joueur={player_slug}  [{status}]"
+        )
 
 
 if __name__ == "__main__":

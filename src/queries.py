@@ -134,12 +134,89 @@ query TestFacet($field: String!, $facetQuery: String!) {
 }
 """
 
-# Requête légère (sans les champs coûteux d'enchère) pour calculer le floor
-# price d'un joueur en cherchant ses cartes en vente, toutes raretés/saisons
-# confondues (on filtre ensuite côté Python selon la rareté/saison voulue).
+# Champ dédié de l'API pour le prix le plus bas d'un joueur, filtré par
+# rareté ET par statut in/off season directement côté serveur — plus
+# fiable que de reconstruire ça à partir de la recherche texte libre.
+PLAYER_LOWEST_PRICE = """
+query PlayerLowestPrice($slugs: [String!]!, $rarity: Rarity!) {
+  players(slugs: $slugs) {
+    slug
+    inSeasonCard: lowestPriceAnyCard(inSeason: true, rarity: $rarity) {
+      slug
+      publicMinPrices {
+        eurCents
+      }
+      liveSingleSaleOffer {
+        senderSide {
+          amounts {
+            eurCents
+            wei
+          }
+          anyCards {
+            slug
+          }
+        }
+        receiverSide {
+          amounts {
+            eurCents
+            wei
+          }
+          anyCards {
+            slug
+          }
+        }
+      }
+      latestEnglishAuction {
+        open
+        currentPrice
+        currency
+      }
+    }
+    offSeasonCard: lowestPriceAnyCard(inSeason: false, rarity: $rarity) {
+      slug
+      publicMinPrices {
+        eurCents
+      }
+      liveSingleSaleOffer {
+        senderSide {
+          amounts {
+            eurCents
+            wei
+          }
+          anyCards {
+            slug
+          }
+        }
+        receiverSide {
+          amounts {
+            eurCents
+            wei
+          }
+          anyCards {
+            slug
+          }
+        }
+      }
+      latestEnglishAuction {
+        open
+        currentPrice
+        currency
+      }
+    }
+  }
+}
+"""
+
+# Requête légère pour calculer le floor price d'un joueur en cherchant ses
+# cartes en vente, toutes raretés/saisons confondues (on filtre ensuite
+# côté Python selon la rareté/saison voulue).
 # Triée par prix croissant pour garantir de capter le vrai minimum malgré la
 # limite de pageSize. Le slug du joueur est récupéré pour éviter de mélanger
 # des homonymes (recherche texte ambiguë sur juste le nom affiché).
+# `liveSingleSaleOffer` sert à vérifier que l'annonce est encore active :
+# `sale.price` (index de recherche) peut être périmé (annonce déjà vendue).
+# Seules les ventes directes comptent pour le floor price (pas les
+# enchères, dont le prix affiché n'est pas un achat garanti).
 PLAYER_FLOOR_SEARCH = """
 query PlayerFloorSearch($query: String!) {
   searchCards(
@@ -149,6 +226,7 @@ query PlayerFloorSearch($query: String!) {
     sorts: [{ field: "price", direction: ASC }]
   ) {
     hits {
+      slug
       rarity
       season
       sale {
@@ -157,6 +235,27 @@ query PlayerFloorSearch($query: String!) {
       card {
         anyPlayer {
           slug
+        }
+        inSeasonEligible
+        liveSingleSaleOffer {
+          senderSide {
+            amounts {
+              eurCents
+              wei
+            }
+            anyCards {
+              slug
+            }
+          }
+          receiverSide {
+            amounts {
+              eurCents
+              wei
+            }
+            anyCards {
+              slug
+            }
+          }
         }
       }
     }

@@ -1,21 +1,21 @@
 """
 Point d'entrée : connexion à Sorare, récupération de toutes vos cartes
-football, et sauvegarde dans data/cards.csv pour l'application Streamlit
-(app.py).
+football, et sauvegarde dans data/sorare.db (SQLite) pour l'application
+Streamlit (app.py).
 
 Usage :
     python -m src.main
 """
 
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src import db
 from src.analysis import cards_to_dataframe, rank_best_lineup
 from src.api_client import SorareClient
 from src.auth import sign_in
-from src.floor_price import compute_floor_price, fetch_floor_prices_by_player
+from src.floor_price import compute_floor_price, fetch_eth_eur_cents, fetch_floor_prices_by_player
 from src.queries import GET_CURRENT_USER, GET_USER_CARDS
 
 load_dotenv()
@@ -27,9 +27,6 @@ load_dotenv()
 # Exemples : ["limited"], ["rare", "super_rare"], ou None pour tout récupérer
 # (beaucoup plus lent, mais permet de tout filtrer dynamiquement dans l'app).
 FETCH_RARITIES = ["limited"]
-
-DATA_DIR = Path("data")
-DATA_FILE = DATA_DIR / "cards.csv"
 
 
 def fetch_all_cards(client: SorareClient, slug: str, rarities: list[str] | None) -> list[dict]:
@@ -81,7 +78,8 @@ def main():
         )
         players = list(players)
         print(f"💰 Calcul du floor price pour {len(players)} joueurs...")
-        floor_data = fetch_floor_prices_by_player(client, players)
+        eth_eur_cents = fetch_eth_eur_cents(client)
+        floor_data = fetch_floor_prices_by_player(client, players, eth_eur_cents=eth_eur_cents)
         df["floor_price_eur"] = df.apply(
             lambda row: compute_floor_price(
                 row["player_name"],
@@ -93,9 +91,8 @@ def main():
             axis=1,
         )
 
-    DATA_DIR.mkdir(exist_ok=True)
-    df.to_csv(DATA_FILE, index=False)
-    print(f"\n💾 {len(df)} cartes exportées dans {DATA_FILE}")
+    db.save_cards(df)
+    print(f"\n💾 {len(df)} cartes enregistrées dans {db.DB_FILE}")
     print("   → Lancez maintenant : streamlit run app.py")
 
     if not df.empty:
