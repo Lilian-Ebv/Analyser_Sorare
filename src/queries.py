@@ -55,33 +55,6 @@ query GetUserCards($slug: String!, $cursor: String, $rarities: [Rarity!]) {
             }
           }
         }
-        # Replis si publicMinPrices est vide (peu d'activité récente) :
-        # prix de la carte équivalente la moins chère en vente, d'abord sur
-        # la même saison, puis toutes saisons confondues.
-        lowestPriceCard {
-          liveSingleSaleOffer {
-            senderSide {
-              amounts { eurCents }
-              anyCards { slug }
-            }
-            receiverSide {
-              amounts { eurCents }
-              anyCards { slug }
-            }
-          }
-        }
-        lowestPriceCardAnySeason {
-          liveSingleSaleOffer {
-            senderSide {
-              amounts { eurCents }
-              anyCards { slug }
-            }
-            receiverSide {
-              amounts { eurCents }
-              anyCards { slug }
-            }
-          }
-        }
         # Historique de propriété : on filtre côté Python l'entrée qui vous
         # concerne pour en tirer votre prix d'achat.
         ownershipHistory {
@@ -136,10 +109,65 @@ query GetUserCards($slug: String!, $cursor: String, $rarities: [Rarity!]) {
 }
 """
 
+# Taux de change live ETH -> EUR, pour convertir correctement les prix
+# d'enchères exprimés en wei (voir SEARCH_PLAYER_CARDS).
+GET_EXCHANGE_RATE = """
+query GetExchangeRate {
+  config {
+    exchangeRate {
+      ethRates {
+        eurCents
+      }
+    }
+  }
+}
+"""
+
+# Utilitaire de diagnostic : teste si un nom de facette donné est valide et
+# retourne ses valeurs possibles (utilisé pour trouver le bon champ "club").
+SEARCH_CARD_FACET_VALUES = """
+query TestFacet($field: String!, $facetQuery: String!) {
+  searchCardFacetValues(field: $field, facetQuery: $facetQuery, limit: 5) {
+    value
+    count
+  }
+}
+"""
+
+# Requête légère (sans les champs coûteux d'enchère) pour calculer le floor
+# price d'un joueur en cherchant ses cartes en vente, toutes raretés/saisons
+# confondues (on filtre ensuite côté Python selon la rareté/saison voulue).
+# Triée par prix croissant pour garantir de capter le vrai minimum malgré la
+# limite de pageSize. Le slug du joueur est récupéré pour éviter de mélanger
+# des homonymes (recherche texte ambiguë sur juste le nom affiché).
+PLAYER_FLOOR_SEARCH = """
+query PlayerFloorSearch($query: String!) {
+  searchCards(
+    query: $query
+    onSaleOnly: true
+    pageSize: 100
+    sorts: [{ field: "price", direction: ASC }]
+  ) {
+    hits {
+      rarity
+      season
+      sale {
+        price
+      }
+      card {
+        anyPlayer {
+          slug
+        }
+      }
+    }
+  }
+}
+"""
+
 # Recherche de cartes par nom de joueur, avec filtre "en vente uniquement".
 SEARCH_PLAYER_CARDS = """
 query SearchPlayerCards($query: String!, $onSaleOnly: Boolean) {
-  searchCards(query: $query, onSaleOnly: $onSaleOnly, pageSize: 25) {
+  searchCards(query: $query, onSaleOnly: $onSaleOnly, pageSize: 100) {
     nbHits
     hits {
       slug

@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from src.analysis import cards_to_dataframe, rank_best_lineup
 from src.api_client import SorareClient
 from src.auth import sign_in
+from src.floor_price import compute_floor_price, fetch_floor_prices_by_player
 from src.queries import GET_CURRENT_USER, GET_USER_CARDS
 
 load_dotenv()
@@ -70,6 +71,27 @@ def main():
     print(f"→ {len(card_nodes)} cartes récupérées.")
 
     df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None)
+
+    if not df.empty:
+        players = (
+            df[["player_name", "player_slug"]]
+            .dropna(subset=["player_name"])
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        )
+        players = list(players)
+        print(f"💰 Calcul du floor price pour {len(players)} joueurs...")
+        floor_data = fetch_floor_prices_by_player(client, players)
+        df["floor_price_eur"] = df.apply(
+            lambda row: compute_floor_price(
+                row["player_name"],
+                row["rarity"],
+                row["season"],
+                row["in_season"],
+                floor_data,
+            ),
+            axis=1,
+        )
 
     DATA_DIR.mkdir(exist_ok=True)
     df.to_csv(DATA_FILE, index=False)

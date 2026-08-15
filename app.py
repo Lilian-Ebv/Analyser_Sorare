@@ -18,8 +18,9 @@ from dotenv import load_dotenv
 from src.analysis import cards_to_dataframe, eligible_leagues
 from src.api_client import SorareClient
 from src.auth import SorareAuthError, complete_sign_in, start_sign_in
+from src.floor_price import compute_floor_price, fetch_floor_prices_by_player
 from src.main import DATA_DIR, FETCH_RARITIES, fetch_all_cards
-from src.queries import GET_CURRENT_USER, SEARCH_PLAYER_CARDS
+from src.queries import GET_CURRENT_USER, GET_EXCHANGE_RATE, SEARCH_PLAYER_CARDS
 
 load_dotenv()
 
@@ -37,6 +38,25 @@ def load_data(path: Path, mtime: float) -> pd.DataFrame:
     de la page.
     """
     return pd.read_csv(path)
+
+
+def format_countdown(end_dt: pd.Timestamp) -> str:
+    """Formate un timestamp en compte à rebours lisible (ex: '1j 2h 3min')."""
+    if pd.isna(end_dt):
+        return ""
+    delta_seconds = int((end_dt - pd.Timestamp.now(tz="UTC")).total_seconds())
+    if delta_seconds <= 0:
+        return "Terminée"
+    days, rem = divmod(delta_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+    parts = []
+    if days > 0:
+        parts.append(f"{days}j")
+    if days > 0 or hours > 0:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}min")
+    return "Dans " + " ".join(parts)
 
 
 def multiselect_or_all(label: str, options: list[str]) -> list[str]:
@@ -58,6 +78,27 @@ def fetch_and_save(jwt_token: str) -> int:
     slug = current_user["slug"]
     card_nodes = fetch_all_cards(client, slug, rarities=FETCH_RARITIES)
     new_df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None)
+
+    if not new_df.empty:
+        players = (
+            new_df[["player_name", "player_slug"]]
+            .dropna(subset=["player_name"])
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        )
+        players = list(players)
+        floor_data = fetch_floor_prices_by_player(client, players)
+        new_df["floor_price_eur"] = new_df.apply(
+            lambda row: compute_floor_price(
+                row["player_name"],
+                row["rarity"],
+                row["season"],
+                row["in_season"],
+                floor_data,
+            ),
+            axis=1,
+        )
+
     DATA_DIR.mkdir(exist_ok=True)
     new_df.to_csv(DATA_FILE, index=False)
     return len(new_df)
@@ -90,38 +131,57 @@ def _pack_teammates(hit: dict) -> list[str]:
     ]
 
 
-def _hit_to_row(hit: dict) -> dict:
+def _auction_live_price_eur(auction: dict, eth_eur_cents: float) -> float | None:
+    """Convertit le prix live (wei) d'une enchère ouverte en euros."""
+    current_price = auction.get("currentPrice")
+    currency = auction.get("currency")
+    if current_price is None or currency != "WEI":
+        return None
+    eth_amount = float(current_price) / 1e18
+    return eth_amount * (eth_eur_cents / 100)
+
+
+def _hit_to_row(hit: dict, eth_eur_cents: float) -> dict:
     """Transforme un hit de recherche brut en ligne de tableau."""
     card = hit.get("card") or {}
     player = card.get("anyPlayer") or {}
     sale = hit.get("sale") or {}
     price_cents = sale.get("price")
     sale_type = sale.get("type")
+    auction = card.get("latestEnglishAuction") or {}
     pack_note = None
+    auction_end = None
+    price_eur = None
 
-    if price_cents is not None:
-        # Confirmé : prix en centimes d'euro.
+    if sale_type == "EnglishAuction" and auction.get("open"):
+        # Pour une enchère en cours, `sale.price` peut être périmé (prix au
+        # moment de l'indexation, avant de nouvelles offres) : on privilégie
+        # toujours le prix live de l'enchère elle-même.
+        price_eur = _auction_live_price_eur(auction, eth_eur_cents)
+        auction_end = auction.get("endDate")
+        other_players = _pack_teammates(hit)
+        if other_players:
+            pack_note = f"Pack de {len(other_players)} : " + ", ".join(other_players)
+        if price_eur is None:
+            # Repli si la conversion échoue pour une raison inattendue.
+            price_eur = price_cents / 100 if price_cents is not None else None
+
+    elif price_cents is not None:
+        # Vente à prix fixe (SingleSaleOffer) : sale.price est fiable.
         price_eur = price_cents / 100
-    else:
-        # Pas de prix direct depuis l'index de recherche. On tente
-        # l'enchère la plus récente, uniquement si elle est encore
-        # ouverte (sinon c'est une donnée périmée, pas le prix actuel).
-        auction = card.get("latestEnglishAuction") or {}
-        price_eur = None
-        if auction.get("open"):
-            current_price = auction.get("currentPrice")
-            currency = auction.get("currency")
-            # currentPrice est en wei (18 décimales) ; conversion
-            # approximative, à confirmer sur un cas réel avec bids.
-            if current_price is not None and currency == "WEI":
-                price_eur = float(current_price) / 1e15
-            sale_type = "Enchère (estimation)"
 
-            other_players = _pack_teammates(hit)
-            if other_players:
-                pack_note = f"Pack de {len(other_players)} : " + ", ".join(other_players)
-        else:
-            sale_type = "Pas de vente active détectée"
+    elif auction.get("open"):
+        # Pas de `sale` direct (carte secondaire d'un pack) mais une
+        # enchère ouverte détectée : on utilise son prix live.
+        price_eur = _auction_live_price_eur(auction, eth_eur_cents)
+        sale_type = "EnglishAuction"
+        auction_end = auction.get("endDate")
+        other_players = _pack_teammates(hit)
+        if other_players:
+            pack_note = f"Pack de {len(other_players)} : " + ", ".join(other_players)
+
+    else:
+        sale_type = "Pas de vente active détectée"
 
     return {
         "player_name": player.get("displayName"),
@@ -130,6 +190,7 @@ def _hit_to_row(hit: dict) -> dict:
         "season": hit.get("season"),
         "sale_type": SALE_TYPE_LABELS.get(sale_type, sale_type),
         "price_eur": price_eur,
+        "auction_end": auction_end,
         "pack": pack_note,
         "card_slug": hit.get("slug"),
     }
@@ -145,6 +206,14 @@ def search_player_market(jwt_token: str, query: str) -> tuple[pd.DataFrame, list
     Retourne (DataFrame fusionné, hits bruts, noms ajoutés automatiquement).
     """
     client = SorareClient(jwt_token)
+
+    if "eth_eur_cents" not in st.session_state:
+        rate_data = client.execute(GET_EXCHANGE_RATE)
+        st.session_state.eth_eur_cents = rate_data["config"]["exchangeRate"]["ethRates"][
+            "eurCents"
+        ]
+    eth_eur_cents = st.session_state.eth_eur_cents
+
     all_hits = _fetch_limited_hits(client, query)
     seen_slugs = {h.get("slug") for h in all_hits}
     searched_names = {query.strip().lower()}
@@ -167,7 +236,9 @@ def search_player_market(jwt_token: str, query: str) -> tuple[pd.DataFrame, list
                 seen_slugs.add(slug)
                 all_hits.append(hit)
 
-    rows = [_hit_to_row(hit) for hit in all_hits]
+    rows = [_hit_to_row(hit, eth_eur_cents) for hit in all_hits]
+    # On ne garde que les cartes avec un prix effectivement trouvé.
+    rows = [r for r in rows if r["price_eur"] is not None]
     return pd.DataFrame(rows), all_hits, extra_searched
 
 
@@ -231,19 +302,41 @@ st.sidebar.divider()
 # --- Recherche d'un joueur sur le marché --------------------------------
 st.sidebar.header("🔎 Recherche marché")
 search_query = st.sidebar.text_input("Nom du joueur", placeholder="ex: Mbappé")
+club_query = st.sidebar.text_input("Club (optionnel)", placeholder="ex: Gamba Osaka")
 if st.sidebar.button("Rechercher", use_container_width=True):
     if not st.session_state.get("jwt_token"):
         st.sidebar.warning("Connectez-vous d'abord via 🔄 Rafraîchir les données.")
-    elif not search_query:
-        st.sidebar.warning("Entrez un nom de joueur.")
+    elif not search_query and not club_query:
+        st.sidebar.warning("Entrez un nom de joueur et/ou un club.")
     else:
-        results_df, raw_hits, extra_searched = search_player_market(
-            st.session_state.jwt_token, search_query
+        token = st.session_state.jwt_token
+        all_extra = []
+        all_raw = []
+
+        if search_query:
+            df1, raw1, extra1 = search_player_market(token, search_query)
+            all_extra += extra1
+            all_raw += raw1
+        else:
+            df1 = pd.DataFrame()
+
+        if club_query:
+            df2, raw2, extra2 = search_player_market(token, club_query)
+            all_extra += extra2
+            all_raw += raw2
+        else:
+            df2 = pd.DataFrame()
+
+        combined = pd.concat([df1, df2], ignore_index=True)
+        if not combined.empty:
+            combined = combined.drop_duplicates(subset=["card_slug"])
+
+        st.session_state.market_search_results = combined
+        st.session_state.market_search_raw = all_raw
+        st.session_state.market_search_query = " / ".join(
+            [v for v in [search_query, club_query] if v]
         )
-        st.session_state.market_search_results = results_df
-        st.session_state.market_search_raw = raw_hits
-        st.session_state.market_search_query = search_query
-        st.session_state.market_search_extra = extra_searched
+        st.session_state.market_search_extra = list(dict.fromkeys(all_extra))
 
 st.sidebar.divider()
 
@@ -258,19 +351,37 @@ if "market_search_results" in st.session_state:
     if results.empty:
         st.info("Aucune carte en vente trouvée pour ce joueur actuellement.")
     else:
-        st.dataframe(
-            results.drop(columns=["card_slug"]),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "price_eur": st.column_config.NumberColumn("Prix", format="%.2f €"),
-                "sale_type": "Type de vente",
-                "club": "Club",
-                "rarity": "Rareté",
-                "season": "Saison",
-                "pack": "Pack (si groupé)",
-            },
-        )
+        available_types = sorted(results["sale_type"].dropna().unique())
+        col_a, col_b = st.columns(2)
+        show_types = []
+        for i, t in enumerate(available_types):
+            col = col_a if i % 2 == 0 else col_b
+            if col.checkbox(t, value=True, key=f"saletype_{t}"):
+                show_types.append(t)
+
+        results = results[results["sale_type"].isin(show_types)]
+
+        if results.empty:
+            st.info("Aucun résultat avec les types de vente sélectionnés.")
+        else:
+            display_results = results.copy()
+            display_results["auction_end"] = pd.to_datetime(
+                display_results["auction_end"], errors="coerce", utc=True
+            ).apply(format_countdown)
+            st.dataframe(
+                display_results.drop(columns=["card_slug"]),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "price_eur": st.column_config.NumberColumn("Prix", format="%.2f €"),
+                    "sale_type": "Type de vente",
+                    "club": "Club",
+                    "rarity": "Rareté",
+                    "season": "Saison",
+                    "auction_end": "Fin d'enchère",
+                    "pack": "Pack (si groupé)",
+                },
+            )
     with st.expander("🐛 Debug : voir les données brutes de l'API"):
         st.json(st.session_state.market_search_raw)
     st.divider()
@@ -412,9 +523,13 @@ if playing_soon.empty:
     st.info("Aucune carte de la sélection n'a de deadline dans cette fenêtre.")
 else:
     display_df = playing_soon.copy()
-    display_df["next_game_date"] = display_df["next_game_date"].dt.strftime("%d/%m/%Y %H:%M")
-    display_df["next_gameweek_deadline"] = display_df["next_gameweek_deadline"].dt.strftime(
-        "%d/%m/%Y %H:%M"
+    display_df["next_game_date"] = (
+        display_df["next_game_date"].dt.tz_convert("Europe/Paris").dt.strftime("%d/%m/%Y %H:%M")
+    )
+    display_df["next_gameweek_deadline"] = (
+        display_df["next_gameweek_deadline"]
+        .dt.tz_convert("Europe/Paris")
+        .dt.strftime("%d/%m/%Y %H:%M")
     )
     st.dataframe(
         display_df[

@@ -49,44 +49,18 @@ def _cents_to_eur(monetary_amount: dict | None) -> float | None:
     return monetary_amount["eurCents"] / 100
 
 
-def _extract_offer_price_eur(offer: dict | None) -> float | None:
-    """
-    Extrait le prix (en EUR) d'une offre de vente (TokenOffer).
-
-    Une offre a deux "côtés" (senderSide / receiverSide) : l'un contient la
-    carte, l'autre le montant demandé. On identifie le côté "argent" comme
-    celui qui ne contient pas de carte, pour rester robuste peu importe le
-    sens exact de la relation sender/receiver.
-    """
-    if not offer:
-        return None
-    for side_key in ("receiverSide", "senderSide"):
-        side = offer.get(side_key) or {}
-        if not side.get("anyCards"):
-            price = _cents_to_eur(side.get("amounts"))
-            if price is not None:
-                return price
-    return None
-
-
 def _extract_floor_price_eur(card: dict) -> float | None:
     """
-    Détermine un prix plancher en cascade :
-    1. publicMinPrices (prix calculé par Sorare pour ce joueur/rareté/saison)
-    2. Prix de la carte équivalente la moins chère en vente, même saison
-    3. Idem, toutes saisons confondues
+    Prix plancher direct depuis Sorare (`publicMinPrices`), quand disponible.
+
+    Ce champ est vide pour beaucoup de cartes (peu d'activité récente sur
+    ce joueur/rareté/saison précis) : dans ce cas, le vrai floor price est
+    calculé séparément via une recherche par joueur (voir
+    `src/floor_price.py`, appelé depuis `main.py`), car les champs
+    `lowestPriceCard`/`lowestPriceCardAnySeason` de l'API se sont montrés
+    peu fiables (montants manquants).
     """
-    direct = _cents_to_eur(card.get("publicMinPrices"))
-    if direct is not None:
-        return direct
-
-    same_season = card.get("lowestPriceCard") or {}
-    price = _extract_offer_price_eur(same_season.get("liveSingleSaleOffer"))
-    if price is not None:
-        return price
-
-    any_season = card.get("lowestPriceCardAnySeason") or {}
-    return _extract_offer_price_eur(any_season.get("liveSingleSaleOffer"))
+    return _cents_to_eur(card.get("publicMinPrices"))
 
 
 def _extract_acquisition(card: dict, my_slug: str) -> tuple[float | None, str | None, str | None]:
@@ -221,6 +195,7 @@ def cards_to_dataframe(
                 "sealed": card.get("sealed", False),
                 "in_season": card.get("inSeasonEligible", False),
                 "player_name": player["displayName"],
+                "player_slug": player.get("slug"),
                 "birth_date": player.get("birthDate"),
                 "club": player["activeClub"]["name"] if player.get("activeClub") else None,
                 "league": (
