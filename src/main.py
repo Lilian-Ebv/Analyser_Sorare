@@ -15,7 +15,7 @@ from src import db
 from src.analysis import cards_to_dataframe, rank_best_lineup
 from src.api_client import SorareClient
 from src.auth import sign_in
-from src.floor_price import compute_floor_price, fetch_eth_eur_cents, fetch_floor_prices_by_player
+from src.floor_price import compute_floor_price, fetch_currency_rates, fetch_floor_prices_by_player
 from src.queries import GET_CURRENT_USER, GET_USER_CARDS
 
 load_dotenv()
@@ -68,9 +68,10 @@ def main():
     print(f"→ {len(card_nodes)} cartes récupérées.")
 
     # Récupéré avant cards_to_dataframe : nécessaire pour convertir en euros
-    # le prix des ventes/enchères actives réglées en wei (sale_price_eur).
-    eth_eur_cents = fetch_eth_eur_cents(client)
-    df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None, eth_eur_cents=eth_eur_cents)
+    # les montants exprimés en wei (ETH), USD ou GBP (floor price, ventes
+    # actives). Certains managers listent leurs cartes dans ces devises.
+    rates = fetch_currency_rates(client)
+    df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None, rates=rates)
 
     if not df.empty:
         players = (
@@ -81,7 +82,7 @@ def main():
         )
         players = list(players)
         print(f"💰 Calcul du floor price pour {len(players)} joueurs...")
-        floor_data = fetch_floor_prices_by_player(client, players, eth_eur_cents=eth_eur_cents)
+        floor_data = fetch_floor_prices_by_player(client, players, rates=rates)
         df["floor_price_eur"] = df.apply(
             lambda row: compute_floor_price(
                 row["player_name"],

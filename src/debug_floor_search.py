@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from src.api_client import SorareClient
 from src.auth import sign_in
-from src.floor_price import _resolve_confirmed_price, fetch_eth_eur_cents
+from src.floor_price import _resolve_confirmed_price, fetch_currency_rates
 from src.queries import PLAYER_FLOOR_SEARCH
 
 load_dotenv()
@@ -28,7 +28,7 @@ def main():
     jwt_token = sign_in(email, password)
     client = SorareClient(jwt_token)
 
-    eth_eur_cents = fetch_eth_eur_cents(client)
+    rates = fetch_currency_rates(client)
 
     print(f"\n🔍 Recherche floor price pour '{name}' (triée par prix)...\n")
     data = client.execute(PLAYER_FLOOR_SEARCH, {"query": name})
@@ -44,7 +44,7 @@ def main():
         if index_price_eur is None:
             confirmed = None
         else:
-            confirmed = _resolve_confirmed_price(card, index_price_eur, eth_eur_cents)
+            confirmed = _resolve_confirmed_price(card, index_price_eur, rates)
 
         status = "✅ CONFIRMÉ" if confirmed is not None else "❌ PÉRIMÉ"
         print(

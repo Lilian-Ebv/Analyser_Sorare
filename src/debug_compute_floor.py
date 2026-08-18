@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 from src.api_client import SorareClient
 from src.auth import sign_in
-from src.floor_price import compute_floor_price, fetch_eth_eur_cents, fetch_floor_prices_by_player
+from src.floor_price import compute_floor_price, fetch_currency_rates, fetch_floor_prices_by_player
 
 load_dotenv()
 
@@ -33,10 +33,10 @@ def main():
     jwt_token = sign_in(email, password)
     client = SorareClient(jwt_token)
 
-    eth_eur_cents = fetch_eth_eur_cents(client)
-    print(f"Taux ETH/EUR (cents) : {eth_eur_cents}")
+    rates = fetch_currency_rates(client)
+    print(f"Taux de change : {rates}")
 
-    floor_data = fetch_floor_prices_by_player(client, [(name, slug)], eth_eur_cents=eth_eur_cents)
+    floor_data = fetch_floor_prices_by_player(client, [(name, slug)], rates=rates)
 
     print(f"\nEntrées brutes pour '{name}' :")
     for entry in floor_data.get(name, []):

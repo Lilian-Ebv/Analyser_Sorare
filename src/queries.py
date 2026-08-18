@@ -50,6 +50,8 @@ query GetUserCards($slug: String!, $cursor: String, $rarities: [Rarity!]) {
             amounts {
               eurCents
               wei
+              usdCents
+              gbpCents
             }
             anyCards {
               slug
@@ -59,6 +61,8 @@ query GetUserCards($slug: String!, $cursor: String, $rarities: [Rarity!]) {
             amounts {
               eurCents
               wei
+              usdCents
+              gbpCents
             }
             anyCards {
               slug
@@ -142,14 +146,21 @@ query GetUserCards($slug: String!, $cursor: String, $rarities: [Rarity!]) {
 }
 """
 
-# Taux de change live ETH -> EUR, pour convertir correctement les prix
-# d'enchères exprimés en wei (voir SEARCH_PLAYER_CARDS).
+# Taux de change live pour convertir correctement les prix exprimés dans
+# une devise autre que l'EUR (wei/ETH pour les enchères, mais aussi USD et
+# GBP : les managers peuvent lister leurs cartes dans ces devises, auquel
+# cas eurCents ET wei restent tous les deux vides sur l'offre elle-même).
+# ethRates donne la valeur de 1 ETH dans plusieurs devises au même instant,
+# ce qui permet de dériver des taux croisés USD->EUR et GBP->EUR
+# (eurCents / usdCents, eurCents / gbpCents) sans requête supplémentaire.
 GET_EXCHANGE_RATE = """
 query GetExchangeRate {
   config {
     exchangeRate {
       ethRates {
         eurCents
+        usdCents
+        gbpCents
       }
     }
   }
@@ -184,6 +195,8 @@ query PlayerLowestPrice($slugs: [String!]!, $rarity: Rarity!) {
           amounts {
             eurCents
             wei
+            usdCents
+            gbpCents
           }
           anyCards {
             slug
@@ -193,6 +206,8 @@ query PlayerLowestPrice($slugs: [String!]!, $rarity: Rarity!) {
           amounts {
             eurCents
             wei
+            usdCents
+            gbpCents
           }
           anyCards {
             slug
@@ -215,6 +230,8 @@ query PlayerLowestPrice($slugs: [String!]!, $rarity: Rarity!) {
           amounts {
             eurCents
             wei
+            usdCents
+            gbpCents
           }
           anyCards {
             slug
@@ -224,6 +241,8 @@ query PlayerLowestPrice($slugs: [String!]!, $rarity: Rarity!) {
           amounts {
             eurCents
             wei
+            usdCents
+            gbpCents
           }
           anyCards {
             slug
@@ -275,6 +294,8 @@ query PlayerFloorSearch($query: String!) {
             amounts {
               eurCents
               wei
+              usdCents
+              gbpCents
             }
             anyCards {
               slug
@@ -284,6 +305,8 @@ query PlayerFloorSearch($query: String!) {
             amounts {
               eurCents
               wei
+              usdCents
+              gbpCents
             }
             anyCards {
               slug

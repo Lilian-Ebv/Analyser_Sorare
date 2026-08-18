@@ -8,10 +8,17 @@ Constat empirique (après plusieurs itérations) :
   même pour une offre bien réelle.
 - `amounts.wei` (même objet MonetaryAmount) s'est montré fiable dans ce
   cas : on l'utilise en repli, converti via le taux ETH/EUR live.
+- Certains managers listent leurs cartes en USD ou en GBP plutôt qu'en EUR
+  ou en ETH : dans ce cas, `eurCents` ET `wei` sont TOUS LES DEUX vides,
+  et seuls `usdCents`/`gbpCents` (avec `referenceCurrency` correspondant)
+  portent le vrai montant. Confirmé empiriquement (cartes Kosei Tani listées
+  à 28,00 $ et 8,00 £ notamment) : sans gérer ces devises, on écartait à
+  tort des ventes directes bien réelles, moins chères, du calcul du floor
+  price.
 - Faire confiance à l'index de recherche (`sale.price`) dès qu'une offre
   "existe" (sans pouvoir en lire le montant) laissait passer des prix non
   représentatifs : on ne garde donc QUE les candidats dont on a pu extraire
-  un vrai montant (eurCents ou wei), rien d'autre.
+  un vrai montant (eurCents, wei, usdCents ou gbpCents), rien d'autre.
 
 Un appel API est fait par joueur UNIQUE (pas par carte), pour limiter le
 nombre de requêtes.
@@ -22,30 +29,102 @@ import time
 from src.api_client import SorareClient
 from src.queries import GET_EXCHANGE_RATE, PLAYER_FLOOR_SEARCH
 
+# Devises gérées pour l'instant (voir amount_to_eur). LAMPORT (Solana) existe
+# côté Sorare mais son format exact n'a pas encore été observé sur une vraie
+# offre : on préfère log un avertissement explicite plutôt que de deviner une
+# conversion non vérifiée sur de l'argent réel.
+_UNHANDLED_CURRENCIES_WARNED: set[str] = set()
 
-def fetch_eth_eur_cents(client: SorareClient) -> float | None:
-    """Récupère le taux de change ETH -> centimes d'EUR live de Sorare."""
+
+def fetch_currency_rates(client: SorareClient) -> dict:
+    """
+    Récupère les taux de change live nécessaires pour convertir un montant
+    en EUR, quelle que soit sa devise d'origine (ETH/wei, USD, GBP).
+
+    Sorare expose la valeur de 1 ETH dans plusieurs devises au même instant
+    (`ethRates`), ce qui permet de dériver des taux croisés USD->EUR et
+    GBP->EUR sans requête supplémentaire : si 1 ETH = 1642,32 € = 1780,50 $,
+    alors 1 $ = 1642,32 / 1780,50 €.
+
+    Retourne un dict {"eth_eur_cents", "usd_eur_rate", "gbp_eur_rate"} ; une
+    clé vaut None si le taux correspondant n'a pas pu être calculé (auquel
+    cas les montants dans cette devise ne pourront pas être convertis).
+    """
     try:
         data = client.execute(GET_EXCHANGE_RATE)
-        return data["config"]["exchangeRate"]["ethRates"]["eurCents"]
+        eth_rates = data["config"]["exchangeRate"]["ethRates"]
     except Exception as e:
-        print(f"   ⚠️  Impossible de récupérer le taux de change ETH/EUR : {e}")
+        print(f"   ⚠️  Impossible de récupérer les taux de change : {e}")
+        return {"eth_eur_cents": None, "usd_eur_rate": None, "gbp_eur_rate": None}
+
+    eur_cents = eth_rates.get("eurCents")
+    usd_cents = eth_rates.get("usdCents")
+    gbp_cents = eth_rates.get("gbpCents")
+
+    return {
+        "eth_eur_cents": eur_cents,
+        "usd_eur_rate": (eur_cents / usd_cents) if eur_cents and usd_cents else None,
+        "gbp_eur_rate": (eur_cents / gbp_cents) if eur_cents and gbp_cents else None,
+    }
+
+
+def amount_to_eur(amounts: dict | None, rates: dict) -> float | None:
+    """
+    Convertit un `MonetaryAmount` (eurCents/wei/usdCents/gbpCents) en euros,
+    en cascade sur le premier champ exploitable. `rates` est le dict retourné
+    par `fetch_currency_rates`.
+
+    Partagé entre `floor_price.py` (recherche marché) et `analysis.py`
+    (ventes actives de vos propres cartes) : même bug, même correctif.
+    """
+    if not amounts:
         return None
 
+    eur_cents = amounts.get("eurCents")
+    if eur_cents:
+        return eur_cents / 100
 
-def _live_offer_amount_eur(card: dict, eth_eur_cents: float | None) -> float | None:
+    wei = amounts.get("wei")
+    eth_eur_cents = rates.get("eth_eur_cents")
+    if wei and wei != "0" and eth_eur_cents:
+        return (float(wei) / 1e18) * (eth_eur_cents / 100)
+
+    usd_cents = amounts.get("usdCents")
+    usd_eur_rate = rates.get("usd_eur_rate")
+    if usd_cents and usd_eur_rate:
+        return (usd_cents / 100) * usd_eur_rate
+
+    gbp_cents = amounts.get("gbpCents")
+    gbp_eur_rate = rates.get("gbp_eur_rate")
+    if gbp_cents and gbp_eur_rate:
+        return (gbp_cents / 100) * gbp_eur_rate
+
+    reference_currency = amounts.get("referenceCurrency")
+    if reference_currency and reference_currency not in ("EUR", "WEI", "USD", "GBP"):
+        # Ex: LAMPORT (Solana). Devise non gérée pour l'instant : on log une
+        # seule fois par devise plutôt que de deviner une conversion, et le
+        # montant reste non exploité (comportement identique à avant ce fix).
+        if reference_currency not in _UNHANDLED_CURRENCIES_WARNED:
+            _UNHANDLED_CURRENCIES_WARNED.add(reference_currency)
+            print(
+                f"   ⚠️  Devise '{reference_currency}' rencontrée mais pas encore "
+                "gérée (ex: LAMPORT/Solana) : certaines annonces dans cette "
+                "devise seront ignorées du floor price."
+            )
+
+    return None
+
+
+def _live_offer_amount_eur(card: dict, rates: dict) -> float | None:
     """
     Extrait le montant (en EUR) de `liveSingleSaleOffer`, si lisible.
     Une offre a deux "côtés" (senderSide/receiverSide) : l'un contient la
     carte, l'autre le montant demandé. On identifie le côté "argent" comme
-    celui qui ne contient pas de carte.
-
-    Constat empirique : `amounts.eurCents` est souvent cassé (null/0) même
-    pour une offre bien réelle. `amounts.wei` s'est montré fiable dans ce
-    cas : on l'utilise en repli, converti via le taux ETH/EUR live.
+    celui qui ne contient pas de carte, puis on délègue la conversion
+    (eurCents -> wei -> usdCents -> gbpCents) à `amount_to_eur`.
 
     Retourne None si l'offre est absente ou si aucun montant n'est
-    exploitable par aucune des deux voies.
+    exploitable dans une devise gérée.
     """
     offer = card.get("liveSingleSaleOffer")
     if not offer:
@@ -53,20 +132,13 @@ def _live_offer_amount_eur(card: dict, eth_eur_cents: float | None) -> float | N
     for side_key in ("receiverSide", "senderSide"):
         side = offer.get(side_key) or {}
         if not side.get("anyCards"):
-            amounts = side.get("amounts") or {}
-            eur_cents = amounts.get("eurCents")
-            if eur_cents:
-                return eur_cents / 100
-            wei = amounts.get("wei")
-            if wei and wei != "0" and eth_eur_cents:
-                eth_amount = float(wei) / 1e18
-                return eth_amount * (eth_eur_cents / 100)
+            amount = amount_to_eur(side.get("amounts"), rates)
+            if amount is not None:
+                return amount
     return None
 
 
-def _resolve_confirmed_price(
-    card: dict, index_price_eur: float, eth_eur_cents: float | None
-) -> float | None:
+def _resolve_confirmed_price(card: dict, index_price_eur: float, rates: dict) -> float | None:
     """
     Détermine le prix "confirmé" d'un candidat, uniquement à partir d'une
     VENTE DIRECTE (`liveSingleSaleOffer`) — pas d'enchère. Le prix affiché
@@ -74,13 +146,13 @@ def _resolve_confirmed_price(
     remporter l'enchère), donc on ne le compte pas comme un floor price
     fiable, même s'il peut sembler plus bas.
     """
-    return _live_offer_amount_eur(card, eth_eur_cents)
+    return _live_offer_amount_eur(card, rates)
 
 
 def fetch_floor_prices_by_player(
     client: SorareClient,
     players: list[tuple[str, str]],
-    eth_eur_cents: float | None = None,
+    rates: dict | None = None,
     delay_seconds: float = 0.2,
 ) -> dict[str, list[tuple[str, str, float, bool]]]:
     """
@@ -92,14 +164,16 @@ def fetch_floor_prices_by_player(
     chaque résultat correspond bien au bon joueur et pas à un homonyme
     (la recherche par nom seul peut être ambiguë).
 
-    `eth_eur_cents` : taux de change ETH -> centimes d'EUR, nécessaire pour
-    convertir le prix des enchères (exprimé en wei).
+    `rates` : dict retourné par `fetch_currency_rates`, nécessaire pour
+    convertir un prix exprimé en wei (ETH), USD ou GBP. Sans lui (None),
+    seuls les montants déjà en `eurCents` seront exploités.
 
     Toujours interrogé en direct sur l'API (pas de cache avec délai ici) :
     les floor prices doivent refléter le marché au moment exact du fetch.
 
     Clé du dict retourné : player_name (tel que fourni).
     """
+    rates = rates or {}
     results: dict[str, list[tuple[str, str, float, bool]]] = {}
     error_count = 0
 
@@ -126,7 +200,7 @@ def fetch_floor_prices_by_player(
             if index_price_eur is None:
                 continue
 
-            confirmed_price = _resolve_confirmed_price(card, index_price_eur, eth_eur_cents)
+            confirmed_price = _resolve_confirmed_price(card, index_price_eur, rates)
             if confirmed_price is not None:
                 entries.append(
                     (

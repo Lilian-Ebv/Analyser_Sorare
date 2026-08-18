@@ -19,7 +19,7 @@ from src.analysis import cards_to_dataframe, eligible_leagues
 from src.api_client import SorareClient
 from src.auth import SorareAuthError, complete_sign_in, start_sign_in
 from src.data import load_cards
-from src.floor_price import compute_floor_price, fetch_eth_eur_cents, fetch_floor_prices_by_player
+from src.floor_price import compute_floor_price, fetch_currency_rates, fetch_floor_prices_by_player
 from src.main import FETCH_RARITIES, fetch_all_cards
 from src.queries import GET_CURRENT_USER, GET_EXCHANGE_RATE, SEARCH_PLAYER_CARDS
 from src.ui import colorize_trend_column, floor_price_trend, format_countdown, highlight_sealed
@@ -42,9 +42,10 @@ def fetch_and_save(jwt_token: str) -> int:
     slug = current_user["slug"]
     card_nodes = fetch_all_cards(client, slug, rarities=FETCH_RARITIES)
     # Récupéré avant cards_to_dataframe : nécessaire pour convertir en euros
-    # le prix des ventes/enchères actives réglées en wei (sale_price_eur).
-    eth_eur_cents = fetch_eth_eur_cents(client)
-    new_df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None, eth_eur_cents=eth_eur_cents)
+    # les montants exprimés en wei (ETH), USD ou GBP (floor price, ventes
+    # actives). Certains managers listent leurs cartes dans ces devises.
+    rates = fetch_currency_rates(client)
+    new_df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None, rates=rates)
 
     if not new_df.empty:
         players = (
@@ -54,7 +55,7 @@ def fetch_and_save(jwt_token: str) -> int:
             .itertuples(index=False, name=None)
         )
         players = list(players)
-        floor_data = fetch_floor_prices_by_player(client, players, eth_eur_cents=eth_eur_cents)
+        floor_data = fetch_floor_prices_by_player(client, players, rates=rates)
         new_df["floor_price_eur"] = new_df.apply(
             lambda row: compute_floor_price(
                 row["player_name"],

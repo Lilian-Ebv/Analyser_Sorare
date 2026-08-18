@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from src.floor_price import amount_to_eur
+
 
 ACQUISITION_LABELS = {
     "INSTANT_BUY": "Achat (instant buy)",
@@ -63,13 +65,14 @@ def _extract_floor_price_eur(card: dict) -> float | None:
     return _cents_to_eur(card.get("publicMinPrices"))
 
 
-def _single_sale_offer_amount_eur(card: dict, eth_eur_cents: float | None) -> float | None:
+def _single_sale_offer_amount_eur(card: dict, rates: dict) -> float | None:
     """
     Montant (EUR) de la vente directe active de la carte (`liveSingleSaleOffer`),
     si lisible. Même logique que `floor_price._live_offer_amount_eur` : le
-    côté "argent" de l'offre est celui qui ne contient pas de carte, et
-    `amounts.eurCents` est souvent cassé (null/0) donc on se replie sur
-    `amounts.wei` converti via le taux ETH/EUR live.
+    côté "argent" de l'offre est celui qui ne contient pas de carte ; la
+    conversion (eurCents -> wei -> usdCents -> gbpCents) est déléguée à
+    `floor_price.amount_to_eur` pour rester cohérente avec le calcul du
+    floor price (certains managers listent en USD/GBP, pas seulement EUR/ETH).
     """
     offer = card.get("liveSingleSaleOffer")
     if not offer:
@@ -77,30 +80,46 @@ def _single_sale_offer_amount_eur(card: dict, eth_eur_cents: float | None) -> fl
     for side_key in ("receiverSide", "senderSide"):
         side = offer.get(side_key) or {}
         if not side.get("anyCards"):
-            amounts = side.get("amounts") or {}
-            eur_cents = amounts.get("eurCents")
-            if eur_cents:
-                return eur_cents / 100
-            wei = amounts.get("wei")
-            if wei and wei != "0" and eth_eur_cents:
-                return (float(wei) / 1e18) * (eth_eur_cents / 100)
+            amount = amount_to_eur(side.get("amounts"), rates)
+            if amount is not None:
+                return amount
     return None
 
 
-def _open_auction_amount_eur(card: dict, eth_eur_cents: float | None) -> float | None:
-    """Prix actuel (EUR) de l'enchère active de la carte, si elle est ouverte."""
+def _open_auction_amount_eur(card: dict, rates: dict) -> float | None:
+    """
+    Prix actuel (EUR) de l'enchère active de la carte, si elle est ouverte.
+    `latestEnglishAuction` porte un montant + devise unique (pas un
+    MonetaryAmount multi-devises comme les ventes directes), donc la
+    conversion est gérée ici directement plutôt que via `amount_to_eur`.
+    """
     auction = card.get("latestEnglishAuction") or {}
     if not auction.get("open"):
         return None
     current_price = auction.get("currentPrice")
     currency = auction.get("currency")
-    if current_price is None or currency != "WEI" or not eth_eur_cents:
+    if current_price is None or currency is None:
         return None
-    return (float(current_price) / 1e18) * (eth_eur_cents / 100)
+
+    if currency == "EUR":
+        return float(current_price) / 100
+    if currency == "WEI":
+        eth_eur_cents = rates.get("eth_eur_cents")
+        return (float(current_price) / 1e18) * (eth_eur_cents / 100) if eth_eur_cents else None
+    if currency == "USD":
+        usd_eur_rate = rates.get("usd_eur_rate")
+        return (float(current_price) / 100) * usd_eur_rate if usd_eur_rate else None
+    if currency == "GBP":
+        gbp_eur_rate = rates.get("gbp_eur_rate")
+        return (float(current_price) / 100) * gbp_eur_rate if gbp_eur_rate else None
+
+    # Devise non gérée (ex: LAMPORT/Solana) : voir le même garde-fou dans
+    # floor_price.amount_to_eur.
+    return None
 
 
 def _extract_active_sale(
-    card: dict, eth_eur_cents: float | None
+    card: dict, rates: dict | None
 ) -> tuple[float | None, str | None, str | None]:
     """
     Retourne (prix demandé en EUR, type de vente, date de fin d'enchère) pour
@@ -109,13 +128,14 @@ def _extract_active_sale(
     Priorité à la vente directe (prix garanti) ; sinon, prix live de
     l'enchère en cours si vous en avez ouvert une.
     """
-    sale_price = _single_sale_offer_amount_eur(card, eth_eur_cents)
+    rates = rates or {}
+    sale_price = _single_sale_offer_amount_eur(card, rates)
     if sale_price is not None:
         return sale_price, "Vente directe", None
 
     auction = card.get("latestEnglishAuction") or {}
     if auction.get("open"):
-        price = _open_auction_amount_eur(card, eth_eur_cents)
+        price = _open_auction_amount_eur(card, rates)
         if price is not None:
             return price, "Enchère", auction.get("endDate")
 
@@ -211,7 +231,7 @@ def cards_to_dataframe(
     card_nodes: list[dict],
     my_slug: str,
     rarities: list[str] | None = None,
-    eth_eur_cents: float | None = None,
+    rates: dict | None = None,
 ) -> pd.DataFrame:
     """
     Transforme la liste brute de cartes (JSON GraphQL) en DataFrame pandas.
@@ -219,10 +239,10 @@ def cards_to_dataframe(
     `rarities` : si fourni (ex: ["limited"]), ne garde que les cartes de ces
     raretés. Laissez à None pour garder toutes les cartes.
 
-    `eth_eur_cents` : taux de change ETH -> centimes d'EUR, nécessaire pour
-    convertir en euros le prix d'une éventuelle vente/enchère active
-    exprimée en wei (`sale_price_eur`). Sans ce taux, les ventes actives
-    réglées en wei ne seront pas détectées.
+    `rates` : dict retourné par `floor_price.fetch_currency_rates`, nécessaire
+    pour convertir en euros le prix d'une éventuelle vente/enchère active
+    exprimée en wei (ETH), USD ou GBP (`sale_price_eur`). Sans lui, seules
+    les ventes déjà en EUR seront détectées.
     """
     rows = []
     for card in card_nodes:
@@ -236,7 +256,7 @@ def cards_to_dataframe(
 
         purchase_price_eur, purchase_date, acquisition_type = _extract_acquisition(card, my_slug)
         floor_price_eur = _extract_floor_price_eur(card)
-        sale_price_eur, sale_type, sale_end_date = _extract_active_sale(card, eth_eur_cents)
+        sale_price_eur, sale_type, sale_end_date = _extract_active_sale(card, rates)
         next_game_date, next_game_competition, next_game_matchup = _extract_next_game(player)
         next_gameweek_name, next_gameweek_deadline, next_gameweek_end = _extract_next_gameweek(card)
 
