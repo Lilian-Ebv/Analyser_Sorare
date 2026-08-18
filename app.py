@@ -18,43 +18,15 @@ from src import db
 from src.analysis import cards_to_dataframe, eligible_leagues
 from src.api_client import SorareClient
 from src.auth import SorareAuthError, complete_sign_in, start_sign_in
+from src.data import load_cards
 from src.floor_price import compute_floor_price, fetch_eth_eur_cents, fetch_floor_prices_by_player
 from src.main import FETCH_RARITIES, fetch_all_cards
 from src.queries import GET_CURRENT_USER, GET_EXCHANGE_RATE, SEARCH_PLAYER_CARDS
+from src.ui import colorize_trend_column, floor_price_trend, format_countdown, highlight_sealed
 
 load_dotenv()
 
 st.set_page_config(page_title="Sorare Analyzer", layout="wide", page_icon="⚽")
-
-
-@st.cache_data
-def load_data(mtime: float | None) -> pd.DataFrame:
-    """
-    Charge les cartes depuis SQLite. `mtime` (date de modification du
-    fichier .db) fait partie de la clé de cache : si vous relancez
-    `python -m src.main` et régénérez la base, le cache est automatiquement
-    invalidé au prochain rechargement de la page.
-    """
-    return db.load_cards()
-
-
-def format_countdown(end_dt: pd.Timestamp) -> str:
-    """Formate un timestamp en compte à rebours lisible (ex: '1j 2h 3min')."""
-    if pd.isna(end_dt):
-        return ""
-    delta_seconds = int((end_dt - pd.Timestamp.now(tz="UTC")).total_seconds())
-    if delta_seconds <= 0:
-        return "Terminée"
-    days, rem = divmod(delta_seconds, 86400)
-    hours, rem = divmod(rem, 3600)
-    minutes, _ = divmod(rem, 60)
-    parts = []
-    if days > 0:
-        parts.append(f"{days}j")
-    if days > 0 or hours > 0:
-        parts.append(f"{hours}h")
-    parts.append(f"{minutes}min")
-    return "Dans " + " ".join(parts)
 
 
 def multiselect_or_all(label: str, options: list[str]) -> list[str]:
@@ -63,52 +35,16 @@ def multiselect_or_all(label: str, options: list[str]) -> list[str]:
     return selected if selected else options
 
 
-def highlight_sealed(row: pd.Series) -> list[str]:
-    """Colore toute la ligne en rouge pâle si la carte est dans un coffre."""
-    color = "background-color: #ffd6d6" if row.get("sealed") else ""
-    return [color] * len(row)
-
-
-TREND_UP = "▲"
-TREND_DOWN = "▼"
-TREND_STABLE = "➖"
-
-
-def floor_price_trend(row: pd.Series) -> str:
-    """
-    Compare le floor price actuel au précédent (colonne `floor_price_prev_eur`,
-    renseignée par `db.save_cards` à chaque rafraîchissement) et retourne le
-    symbole de tendance correspondant. Chaîne vide si l'une des deux valeurs
-    manque (première récupération pour cette carte, ou floor price introuvable).
-    """
-    new = row.get("floor_price_eur")
-    old = row.get("floor_price_prev_eur")
-    if pd.isna(new) or pd.isna(old):
-        return ""
-    if new > old:
-        return TREND_UP
-    if new < old:
-        return TREND_DOWN
-    return TREND_STABLE
-
-
-def colorize_trend_column(col: pd.Series) -> list[str]:
-    """Style le texte de la colonne tendance : vert (hausse), rouge (baisse), gris (stable)."""
-    styles = {
-        TREND_UP: "color: #1a7f37; font-weight: bold; text-align: center",
-        TREND_DOWN: "color: #cf222e; font-weight: bold; text-align: center",
-        TREND_STABLE: "color: #6e7781; font-weight: bold; text-align: center",
-    }
-    return [styles.get(val, "text-align: center") for val in col]
-
-
 def fetch_and_save(jwt_token: str) -> int:
     """Récupère les cartes via l'API et écrase data/cards.csv. Retourne le nombre de cartes."""
     client = SorareClient(jwt_token)
     current_user = client.execute(GET_CURRENT_USER)["currentUser"]
     slug = current_user["slug"]
     card_nodes = fetch_all_cards(client, slug, rarities=FETCH_RARITIES)
-    new_df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None)
+    # Récupéré avant cards_to_dataframe : nécessaire pour convertir en euros
+    # le prix des ventes/enchères actives réglées en wei (sale_price_eur).
+    eth_eur_cents = fetch_eth_eur_cents(client)
+    new_df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None, eth_eur_cents=eth_eur_cents)
 
     if not new_df.empty:
         players = (
@@ -118,7 +54,6 @@ def fetch_and_save(jwt_token: str) -> int:
             .itertuples(index=False, name=None)
         )
         players = list(players)
-        eth_eur_cents = fetch_eth_eur_cents(client)
         floor_data = fetch_floor_prices_by_player(client, players, eth_eur_cents=eth_eur_cents)
         new_df["floor_price_eur"] = new_df.apply(
             lambda row: compute_floor_price(
@@ -425,7 +360,7 @@ if not db.DB_FILE.exists():
     )
     st.stop()
 
-df = load_data(db.last_updated())
+df = load_cards(db.last_updated())
 if df.empty:
     st.warning(
         "La base de données existe mais ne contient aucune carte. "
@@ -433,18 +368,6 @@ if df.empty:
     )
     st.stop()
 
-df["next_game_date"] = pd.to_datetime(df["next_game_date"], errors="coerce", utc=True)
-df["next_gameweek_deadline"] = pd.to_datetime(df["next_gameweek_deadline"], errors="coerce", utc=True)
-
-# SQLite n'a pas de vrai type booléen : ces colonnes reviennent en 0/1,
-# on les reconvertit explicitement.
-for bool_col in ["u23_eligible", "sealed", "in_season"]:
-    df[bool_col] = df[bool_col].astype(bool)
-
-# Bases existantes créées avant l'ajout du suivi de tendance : la colonne
-# peut être absente lors du tout premier chargement après mise à jour.
-if "floor_price_prev_eur" not in df.columns:
-    df["floor_price_prev_eur"] = pd.NA
 df["floor_price_trend"] = df.apply(floor_price_trend, axis=1)
 
 # --- Filtres (barre latérale) -----------------------------------------

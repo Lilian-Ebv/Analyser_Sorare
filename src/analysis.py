@@ -63,6 +63,65 @@ def _extract_floor_price_eur(card: dict) -> float | None:
     return _cents_to_eur(card.get("publicMinPrices"))
 
 
+def _single_sale_offer_amount_eur(card: dict, eth_eur_cents: float | None) -> float | None:
+    """
+    Montant (EUR) de la vente directe active de la carte (`liveSingleSaleOffer`),
+    si lisible. Même logique que `floor_price._live_offer_amount_eur` : le
+    côté "argent" de l'offre est celui qui ne contient pas de carte, et
+    `amounts.eurCents` est souvent cassé (null/0) donc on se replie sur
+    `amounts.wei` converti via le taux ETH/EUR live.
+    """
+    offer = card.get("liveSingleSaleOffer")
+    if not offer:
+        return None
+    for side_key in ("receiverSide", "senderSide"):
+        side = offer.get(side_key) or {}
+        if not side.get("anyCards"):
+            amounts = side.get("amounts") or {}
+            eur_cents = amounts.get("eurCents")
+            if eur_cents:
+                return eur_cents / 100
+            wei = amounts.get("wei")
+            if wei and wei != "0" and eth_eur_cents:
+                return (float(wei) / 1e18) * (eth_eur_cents / 100)
+    return None
+
+
+def _open_auction_amount_eur(card: dict, eth_eur_cents: float | None) -> float | None:
+    """Prix actuel (EUR) de l'enchère active de la carte, si elle est ouverte."""
+    auction = card.get("latestEnglishAuction") or {}
+    if not auction.get("open"):
+        return None
+    current_price = auction.get("currentPrice")
+    currency = auction.get("currency")
+    if current_price is None or currency != "WEI" or not eth_eur_cents:
+        return None
+    return (float(current_price) / 1e18) * (eth_eur_cents / 100)
+
+
+def _extract_active_sale(
+    card: dict, eth_eur_cents: float | None
+) -> tuple[float | None, str | None, str | None]:
+    """
+    Retourne (prix demandé en EUR, type de vente, date de fin d'enchère) pour
+    une carte que VOUS avez actuellement mise en vente, sinon (None, None, None).
+
+    Priorité à la vente directe (prix garanti) ; sinon, prix live de
+    l'enchère en cours si vous en avez ouvert une.
+    """
+    sale_price = _single_sale_offer_amount_eur(card, eth_eur_cents)
+    if sale_price is not None:
+        return sale_price, "Vente directe", None
+
+    auction = card.get("latestEnglishAuction") or {}
+    if auction.get("open"):
+        price = _open_auction_amount_eur(card, eth_eur_cents)
+        if price is not None:
+            return price, "Enchère", auction.get("endDate")
+
+    return None, None, None
+
+
 def _extract_acquisition(card: dict, my_slug: str) -> tuple[float | None, str | None, str | None]:
     """
     Cherche dans l'historique de propriété de la carte l'entrée qui
@@ -152,12 +211,18 @@ def cards_to_dataframe(
     card_nodes: list[dict],
     my_slug: str,
     rarities: list[str] | None = None,
+    eth_eur_cents: float | None = None,
 ) -> pd.DataFrame:
     """
     Transforme la liste brute de cartes (JSON GraphQL) en DataFrame pandas.
 
     `rarities` : si fourni (ex: ["limited"]), ne garde que les cartes de ces
     raretés. Laissez à None pour garder toutes les cartes.
+
+    `eth_eur_cents` : taux de change ETH -> centimes d'EUR, nécessaire pour
+    convertir en euros le prix d'une éventuelle vente/enchère active
+    exprimée en wei (`sale_price_eur`). Sans ce taux, les ventes actives
+    réglées en wei ne seront pas détectées.
     """
     rows = []
     for card in card_nodes:
@@ -171,6 +236,7 @@ def cards_to_dataframe(
 
         purchase_price_eur, purchase_date, acquisition_type = _extract_acquisition(card, my_slug)
         floor_price_eur = _extract_floor_price_eur(card)
+        sale_price_eur, sale_type, sale_end_date = _extract_active_sale(card, eth_eur_cents)
         next_game_date, next_game_competition, next_game_matchup = _extract_next_game(player)
         next_gameweek_name, next_gameweek_deadline, next_gameweek_end = _extract_next_gameweek(card)
 
@@ -208,6 +274,9 @@ def cards_to_dataframe(
                 "purchase_price_eur": purchase_price_eur,
                 "purchase_date": purchase_date,
                 "floor_price_eur": floor_price_eur,
+                "sale_price_eur": sale_price_eur,
+                "sale_type": sale_type,
+                "sale_end_date": sale_end_date,
                 "next_game_date": next_game_date,
                 "next_game_competition": next_game_competition,
                 "next_game_matchup": next_game_matchup,

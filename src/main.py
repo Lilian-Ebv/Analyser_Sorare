@@ -67,7 +67,10 @@ def main():
     card_nodes = fetch_all_cards(client, slug, rarities=FETCH_RARITIES)
     print(f"→ {len(card_nodes)} cartes récupérées.")
 
-    df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None)
+    # Récupéré avant cards_to_dataframe : nécessaire pour convertir en euros
+    # le prix des ventes/enchères actives réglées en wei (sale_price_eur).
+    eth_eur_cents = fetch_eth_eur_cents(client)
+    df = cards_to_dataframe(card_nodes, my_slug=slug, rarities=None, eth_eur_cents=eth_eur_cents)
 
     if not df.empty:
         players = (
@@ -78,7 +81,6 @@ def main():
         )
         players = list(players)
         print(f"💰 Calcul du floor price pour {len(players)} joueurs...")
-        eth_eur_cents = fetch_eth_eur_cents(client)
         floor_data = fetch_floor_prices_by_player(client, players, eth_eur_cents=eth_eur_cents)
         df["floor_price_eur"] = df.apply(
             lambda row: compute_floor_price(
@@ -93,6 +95,9 @@ def main():
 
     db.save_cards(df)
     print(f"\n💾 {len(df)} cartes enregistrées dans {db.DB_FILE}")
+    if not df.empty:
+        on_sale_count = df["sale_price_eur"].notna().sum()
+        print(f"🏷️  {on_sale_count} carte(s) actuellement en vente détectée(s).")
     print("   → Lancez maintenant : streamlit run app.py")
 
     if not df.empty:

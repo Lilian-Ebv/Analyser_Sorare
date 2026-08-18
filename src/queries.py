@@ -42,6 +42,39 @@ query GetUserCards($slug: String!, $cursor: String, $rarities: [Rarity!]) {
           referenceCurrency
           eurCents
         }
+        # Vente directe active de CETTE carte précise (si vous l'avez mise
+        # en vente à prix fixe). Même structure que dans PLAYER_FLOOR_SEARCH :
+        # le côté "argent" (sans anyCards) porte le montant demandé.
+        liveSingleSaleOffer {
+          senderSide {
+            amounts {
+              eurCents
+              wei
+            }
+            anyCards {
+              slug
+            }
+          }
+          receiverSide {
+            amounts {
+              eurCents
+              wei
+            }
+            anyCards {
+              slug
+            }
+          }
+        }
+        # Enchère active de CETTE carte précise (si vous l'avez mise aux
+        # enchères). `open` distingue une enchère en cours d'une déjà
+        # terminée (le champ renvoie la DERNIÈRE enchère, pas forcément en
+        # cours).
+        latestEnglishAuction {
+          open
+          currentPrice
+          currency
+          endDate
+        }
         # Game weeks / compétitions Sorare à venir pour lesquelles cette
         # carte précise est éligible, avec la deadline de composition.
         eligibleUpcomingLeagueTracks {
