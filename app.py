@@ -69,6 +69,39 @@ def highlight_sealed(row: pd.Series) -> list[str]:
     return [color] * len(row)
 
 
+TREND_UP = "▲"
+TREND_DOWN = "▼"
+TREND_STABLE = "➖"
+
+
+def floor_price_trend(row: pd.Series) -> str:
+    """
+    Compare le floor price actuel au précédent (colonne `floor_price_prev_eur`,
+    renseignée par `db.save_cards` à chaque rafraîchissement) et retourne le
+    symbole de tendance correspondant. Chaîne vide si l'une des deux valeurs
+    manque (première récupération pour cette carte, ou floor price introuvable).
+    """
+    new = row.get("floor_price_eur")
+    old = row.get("floor_price_prev_eur")
+    if pd.isna(new) or pd.isna(old):
+        return ""
+    if new > old:
+        return TREND_UP
+    if new < old:
+        return TREND_DOWN
+    return TREND_STABLE
+
+
+def colorize_trend_column(col: pd.Series) -> list[str]:
+    """Style le texte de la colonne tendance : vert (hausse), rouge (baisse), gris (stable)."""
+    styles = {
+        TREND_UP: "color: #1a7f37; font-weight: bold; text-align: center",
+        TREND_DOWN: "color: #cf222e; font-weight: bold; text-align: center",
+        TREND_STABLE: "color: #6e7781; font-weight: bold; text-align: center",
+    }
+    return [styles.get(val, "text-align: center") for val in col]
+
+
 def fetch_and_save(jwt_token: str) -> int:
     """Récupère les cartes via l'API et écrase data/cards.csv. Retourne le nombre de cartes."""
     client = SorareClient(jwt_token)
@@ -408,6 +441,12 @@ df["next_gameweek_deadline"] = pd.to_datetime(df["next_gameweek_deadline"], erro
 for bool_col in ["u23_eligible", "sealed", "in_season"]:
     df[bool_col] = df[bool_col].astype(bool)
 
+# Bases existantes créées avant l'ajout du suivi de tendance : la colonne
+# peut être absente lors du tout premier chargement après mise à jour.
+if "floor_price_prev_eur" not in df.columns:
+    df["floor_price_prev_eur"] = pd.NA
+df["floor_price_trend"] = df.apply(floor_price_trend, axis=1)
+
 # --- Filtres (barre latérale) -----------------------------------------
 st.sidebar.header("🔍 Filtres")
 
@@ -490,19 +529,27 @@ main_columns = [
     "purchase_price_eur",
     "purchase_date",
     "floor_price_eur",
+    "floor_price_trend",
     "birth_date",
     "u23_eligible",
     "sealed",
 ]
 main_table = filtered.sort_values("avg_score_l5", ascending=False)[main_columns]
+st.caption(
+    "▲ vert = floor price en hausse, ▼ rouge = en baisse, ➖ gris = stable "
+    "depuis le dernier rafraîchissement (bouton 🔄 ou `python -m src.main`)."
+)
 st.dataframe(
-    main_table.style.apply(highlight_sealed, axis=1),
+    main_table.style.apply(highlight_sealed, axis=1).apply(
+        colorize_trend_column, subset=["floor_price_trend"]
+    ),
     use_container_width=True,
     hide_index=True,
     column_config={
         "league": "Championnat",
         "purchase_price_eur": st.column_config.NumberColumn("Prix d'achat", format="%.2f €"),
         "floor_price_eur": st.column_config.NumberColumn("Floor price", format="%.2f €"),
+        "floor_price_trend": st.column_config.TextColumn("Tendance", width="small"),
         "avg_score_l5": st.column_config.NumberColumn("Score moyen (L5)", format="%.1f"),
         "avg_score_l10": st.column_config.NumberColumn("Score moyen (L10)", format="%.1f"),
         "avg_score_l40": st.column_config.NumberColumn("Score moyen (L40)", format="%.1f"),
