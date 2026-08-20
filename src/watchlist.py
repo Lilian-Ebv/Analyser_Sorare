@@ -33,7 +33,11 @@ def fetch_watchlist_players(client: SorareClient, watchlist_id: str) -> list[dic
 
     while True:
         data = client.execute(GET_WATCHLIST_PLAYERS, {"id": watchlist_id, "cursor": cursor})
-        watchlist = (data.get("market") or {}).get("watchlist") or {}
+        # `node` peut être n'importe quel type implémentant l'interface Node ;
+        # ici toujours une Watchlist puisque `watchlist_id` vient de
+        # `fetch_watchlists`, mais on protège quand même contre un dict vide
+        # si jamais l'id ne résout à rien (liste supprimée entre-temps...).
+        watchlist = data.get("node") or {}
         connection = watchlist.get("commonPlayers") or {}
 
         for node in connection.get("nodes") or []:

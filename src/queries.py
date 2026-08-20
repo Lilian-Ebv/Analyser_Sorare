@@ -408,13 +408,19 @@ query GetMyWatchlists($sport: Sport!, $filter: WatchlistFilter) {
 # propres cartes, puisqu'il n'y a pas de carte concrète ici : juste le
 # joueur suivi).
 #
-# IMPORTANT : `watchlist(id: ID!)` est un champ de `MarketRoot`, pas de la
-# racine `Query` non plus — imbriqué dans `market { ... }` (même vérification
-# que ci-dessus contre le schéma réellement servi).
+# IMPORTANT (2e essai) : `market.watchlist(id: ...)` renvoie "not found" pour
+# une watchlist PRIVÉE (confirmé en pratique : erreur NOT_FOUND alors que le
+# même id sort bien de currentUser.myWatchlists juste avant) — ce champ
+# semble scopé aux watchlists visibles côté "market" (publiques), pas aux
+# vôtres. On utilise à la place `node(id: ID!): Node`, le point d'entrée
+# Relay générique de l'API (présent sur Query, vérifié dans le schéma) qui
+# récupère n'importe quel objet par son id global selon les droits du
+# viewer connecté — Watchlist implémente bien l'interface `Node`, donc ce
+# chemin doit fonctionner pour vos propres listes, publiques ou non.
 GET_WATCHLIST_PLAYERS = """
 query GetWatchlistPlayers($id: ID!, $cursor: String) {
-  market {
-    watchlist(id: $id) {
+  node(id: $id) {
+    ... on Watchlist {
       commonPlayers(first: 100, after: $cursor) {
         pageInfo {
           hasNextPage
