@@ -33,6 +33,14 @@ query GetUserCards($slug: String!, $cursor: String, $rarities: [Rarity!]) {
         anyPositions
         sealed
         inSeasonEligible
+        # Niveau et XP de la carte (disponibles directement sur
+        # AnyCardInterface, pas besoin de fragment inline). xpNeededForNextGrade
+        # vaut `null` quand la carte a atteint son niveau maximum (plus de
+        # palier suivant) : XP restant = xpNeededForNextGrade - xp.
+        grade
+        xp
+        xpNeededForCurrentGrade
+        xpNeededForNextGrade
         # Moyennes de la carte sur différentes fenêtres
         avgScoreL5: averageScore(type: LAST_FIVE_SO5_AVERAGE_SCORE)
         avgScoreL10: averageScore(type: LAST_TEN_PLAYED_SO5_AVERAGE_SCORE)

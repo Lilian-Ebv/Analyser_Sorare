@@ -271,6 +271,18 @@ def cards_to_dataframe(
         if game_dt and cutoff_dt and not (cutoff_dt <= game_dt and (end_dt is None or game_dt <= end_dt)):
             next_game_date, next_game_competition, next_game_matchup = None, None, None
 
+        xp = card.get("xp")
+        xp_needed_for_next_grade = card.get("xpNeededForNextGrade")
+        # `xpNeededForNextGrade` vaut None quand la carte a atteint son
+        # niveau maximum (pas de palier suivant) : XP restant indéfini dans
+        # ce cas, PAS "0 XP restant" (qui suggérerait à tort un level up
+        # imminent).
+        xp_remaining = (
+            xp_needed_for_next_grade - xp
+            if xp is not None and xp_needed_for_next_grade is not None
+            else None
+        )
+
         rows.append(
             {
                 "card_slug": card["slug"],
@@ -280,6 +292,11 @@ def cards_to_dataframe(
                 "u23_eligible": card.get("u23Eligible", False),
                 "sealed": card.get("sealed", False),
                 "in_season": card.get("inSeasonEligible", False),
+                "grade": card.get("grade"),
+                "xp": xp,
+                "xp_needed_for_current_grade": card.get("xpNeededForCurrentGrade"),
+                "xp_needed_for_next_grade": xp_needed_for_next_grade,
+                "xp_remaining": xp_remaining,
                 "player_name": player["displayName"],
                 "player_slug": player.get("slug"),
                 "birth_date": player.get("birthDate"),

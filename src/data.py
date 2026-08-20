@@ -42,6 +42,9 @@ def load_cards(mtime: float | None) -> pd.DataFrame:
         df["sale_type"] = None
     if "sale_end_date" not in df.columns:
         df["sale_end_date"] = None
+    for xp_col in ["grade", "xp", "xp_needed_for_current_grade", "xp_needed_for_next_grade", "xp_remaining"]:
+        if xp_col not in df.columns:
+            df[xp_col] = pd.NA
 
     return df
 
