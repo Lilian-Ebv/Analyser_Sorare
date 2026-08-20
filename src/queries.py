@@ -383,13 +383,22 @@ query GetUpcomingLeagues {
 # à l'utilisateur : les joueurs eux-mêmes sont récupérés séparément via
 # GET_WATCHLIST_PLAYERS (paginé, une watchlist peut contenir beaucoup de
 # joueurs).
+#
+# IMPORTANT : `myWatchlists` est un champ de `CurrentUser`, PAS de la racine
+# `Query` (vérifié en comparant avec le schéma réellement servi par l'API,
+# téléchargé via `curl https://api.sorare.com/graphql/schema` — le dump
+# schema.graphql du projet laissait à tort penser qu'il était à la racine).
+# Doit donc être imbriqué dans `currentUser { ... }`, sinon l'API répond
+# "Field 'myWatchlists' doesn't exist on type 'Query'".
 GET_MY_WATCHLISTS = """
 query GetMyWatchlists($sport: Sport!, $filter: WatchlistFilter) {
-  myWatchlists(sport: $sport, filter: $filter) {
-    id
-    slug
-    title
-    totalPlayersCount
+  currentUser {
+    myWatchlists(sport: $sport, filter: $filter) {
+      id
+      slug
+      title
+      totalPlayersCount
+    }
   }
 }
 """
@@ -398,23 +407,29 @@ query GetMyWatchlists($sport: Sport!, $filter: WatchlistFilter) {
 # CommonPlayer (pas besoin du fragment inline `... on Card` utilisé pour vos
 # propres cartes, puisqu'il n'y a pas de carte concrète ici : juste le
 # joueur suivi).
+#
+# IMPORTANT : `watchlist(id: ID!)` est un champ de `MarketRoot`, pas de la
+# racine `Query` non plus — imbriqué dans `market { ... }` (même vérification
+# que ci-dessus contre le schéma réellement servi).
 GET_WATCHLIST_PLAYERS = """
 query GetWatchlistPlayers($id: ID!, $cursor: String) {
-  watchlist(id: $id) {
-    commonPlayers(first: 100, after: $cursor) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      nodes {
-        positions
-        anyPlayer {
-          slug
-          displayName
-          activeClub {
-            name
-            domesticLeague {
+  market {
+    watchlist(id: $id) {
+      commonPlayers(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          positions
+          anyPlayer {
+            slug
+            displayName
+            activeClub {
               name
+              domesticLeague {
+                name
+              }
             }
           }
         }

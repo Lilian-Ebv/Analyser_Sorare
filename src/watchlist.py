@@ -19,7 +19,7 @@ def fetch_watchlists(
     suivez (voir GET_MY_WATCHLISTS).
     """
     data = client.execute(GET_MY_WATCHLISTS, {"sport": sport, "filter": filter})
-    return data.get("myWatchlists") or []
+    return (data.get("currentUser") or {}).get("myWatchlists") or []
 
 
 def fetch_watchlist_players(client: SorareClient, watchlist_id: str) -> list[dict]:
@@ -33,7 +33,8 @@ def fetch_watchlist_players(client: SorareClient, watchlist_id: str) -> list[dic
 
     while True:
         data = client.execute(GET_WATCHLIST_PLAYERS, {"id": watchlist_id, "cursor": cursor})
-        connection = (data.get("watchlist") or {}).get("commonPlayers") or {}
+        watchlist = (data.get("market") or {}).get("watchlist") or {}
+        connection = watchlist.get("commonPlayers") or {}
 
         for node in connection.get("nodes") or []:
             player = node.get("anyPlayer") or {}
