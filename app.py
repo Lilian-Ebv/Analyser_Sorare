@@ -23,6 +23,7 @@ from src.floor_price import compute_floor_price, fetch_currency_rates, fetch_flo
 from src.main import FETCH_RARITIES, fetch_all_cards
 from src.queries import GET_CURRENT_USER, GET_EXCHANGE_RATE, SEARCH_PLAYER_CARDS
 from src.ui import colorize_trend_column, floor_price_trend, format_countdown, highlight_sealed
+from src.watchlist import compute_watched_floor_prices, fetch_all_watched_players
 
 load_dotenv()
 
@@ -68,6 +69,19 @@ def fetch_and_save(jwt_token: str) -> int:
         )
 
     db.save_cards(new_df)
+
+    watched_df = fetch_all_watched_players(client)
+    if not watched_df.empty:
+        watched_players = list(
+            watched_df[["player_name", "player_slug"]]
+            .dropna(subset=["player_name"])
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        )
+        watched_floor_data = fetch_floor_prices_by_player(client, watched_players, rates=rates)
+        watched_df = compute_watched_floor_prices(watched_df, watched_floor_data)
+    db.save_watchlist_players(watched_df)
+
     return len(new_df)
 
 

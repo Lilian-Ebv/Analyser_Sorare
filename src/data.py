@@ -44,3 +44,20 @@ def load_cards(mtime: float | None) -> pd.DataFrame:
         df["sale_end_date"] = None
 
     return df
+
+
+@st.cache_data
+def load_watchlist_players(mtime: float | None) -> pd.DataFrame:
+    """
+    Charge les joueurs de watchlist depuis SQLite. Même logique de cache que
+    `load_cards` : `mtime` (voir `db.last_updated()`, même fichier .db que
+    les cartes) invalide le cache à chaque rafraîchissement.
+    """
+    df = db.load_watchlist_players()
+    if df.empty:
+        return df
+
+    if "floor_price_prev_eur" not in df.columns:
+        df["floor_price_prev_eur"] = pd.NA
+
+    return df

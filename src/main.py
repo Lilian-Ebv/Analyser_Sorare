@@ -17,6 +17,7 @@ from src.api_client import SorareClient
 from src.auth import sign_in
 from src.floor_price import compute_floor_price, fetch_currency_rates, fetch_floor_prices_by_player
 from src.queries import GET_CURRENT_USER, GET_USER_CARDS
+from src.watchlist import compute_watched_floor_prices, fetch_all_watched_players
 
 load_dotenv()
 
@@ -99,6 +100,24 @@ def main():
     if not df.empty:
         on_sale_count = df["sale_price_eur"].notna().sum()
         print(f"🏷️  {on_sale_count} carte(s) actuellement en vente détectée(s).")
+
+    print("\n👀 Récupération de vos watchlists...")
+    watched_df = fetch_all_watched_players(client)
+    if watched_df.empty:
+        print("   Aucun joueur suivi trouvé (pas de watchlist, ou watchlists vides).")
+    else:
+        watched_players = list(
+            watched_df[["player_name", "player_slug"]]
+            .dropna(subset=["player_name"])
+            .drop_duplicates()
+            .itertuples(index=False, name=None)
+        )
+        print(f"💰 Calcul du floor price Limited in-season pour {len(watched_players)} joueur(s) suivi(s)...")
+        watched_floor_data = fetch_floor_prices_by_player(client, watched_players, rates=rates)
+        watched_df = compute_watched_floor_prices(watched_df, watched_floor_data)
+    db.save_watchlist_players(watched_df)
+    print(f"👀 {len(watched_df)} joueur(s) de watchlist enregistré(s) dans {db.DB_FILE}")
+
     print("   → Lancez maintenant : streamlit run app.py")
 
     if not df.empty:

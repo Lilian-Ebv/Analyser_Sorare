@@ -375,3 +375,51 @@ query GetUpcomingLeagues {
   }
 }
 """
+
+# Liste des watchlists du compte connecté. `filter: ALL_WATCHLISTS` inclut
+# aussi bien les listes que vous avez créées que celles que vous suivez
+# (créées par d'autres managers) — c'est ce qui apparaît sous "Watchlists"
+# dans l'interface Sorare. `totalPlayersCount` sert juste d'info affichée
+# à l'utilisateur : les joueurs eux-mêmes sont récupérés séparément via
+# GET_WATCHLIST_PLAYERS (paginé, une watchlist peut contenir beaucoup de
+# joueurs).
+GET_MY_WATCHLISTS = """
+query GetMyWatchlists($sport: Sport!, $filter: WatchlistFilter) {
+  myWatchlists(sport: $sport, filter: $filter) {
+    id
+    slug
+    title
+    totalPlayersCount
+  }
+}
+"""
+
+# Joueurs d'une watchlist précise, paginé. `positions` vient directement de
+# CommonPlayer (pas besoin du fragment inline `... on Card` utilisé pour vos
+# propres cartes, puisqu'il n'y a pas de carte concrète ici : juste le
+# joueur suivi).
+GET_WATCHLIST_PLAYERS = """
+query GetWatchlistPlayers($id: ID!, $cursor: String) {
+  watchlist(id: $id) {
+    commonPlayers(first: 100, after: $cursor) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        positions
+        anyPlayer {
+          slug
+          displayName
+          activeClub {
+            name
+            domesticLeague {
+              name
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
