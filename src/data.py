@@ -59,5 +59,9 @@ def load_watchlist_players(mtime: float | None) -> pd.DataFrame:
 
     if "floor_price_prev_eur" not in df.columns:
         df["floor_price_prev_eur"] = pd.NA
+    # Colonne ajoutée après la première version de la page Watchlist :
+    # absente si la base n'a pas encore été rafraîchie depuis.
+    if "floor_price_off_season_eur" not in df.columns:
+        df["floor_price_off_season_eur"] = pd.NA
 
     return df

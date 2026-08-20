@@ -1,7 +1,8 @@
 """
 Page Streamlit : joueurs suivis dans vos watchlists Sorare, avec leur floor
-price Limited in-season (seule rareté/statut retenu, comme demandé — pas
-les autres raretés, pas les cartes hors saison).
+price Limited in-season (colonne principale, comme demandé au départ — pas
+les autres raretés, pas les cartes hors saison) et, à titre de comparaison,
+leur floor price Limited hors-saison.
 
 Les données viennent de data/sorare.db, la même base que les autres pages.
 Ajoutée automatiquement à la navigation par la convention du dossier
@@ -26,9 +27,9 @@ st.set_page_config(page_title="Sorare Analyzer — Watchlist", layout="wide", pa
 
 st.title("👀 Watchlist")
 st.caption(
-    "Floor price Limited in-season de vos joueurs suivis (toutes vos "
-    "watchlists Sorare confondues), d'après le dernier rafraîchissement "
-    "(bouton 🔄 sur la page principale, ou `python -m src.main`)."
+    "Floor price Limited de vos joueurs suivis (toutes vos watchlists "
+    "Sorare confondues), d'après le dernier rafraîchissement (bouton 🔄 sur "
+    "la page principale, ou `python -m src.main`)."
 )
 
 if not db.DB_FILE.exists():
@@ -49,6 +50,31 @@ if df.empty:
 
 df["floor_price_trend"] = df.apply(floor_price_trend, axis=1)
 
+# --- Filtre par watchlist (barre latérale) --------------------------------
+# La colonne `watchlists` est une chaîne "Ma liste, Prospects" (un joueur
+# peut appartenir à plusieurs listes) : on éclate chaque valeur pour obtenir
+# la liste des noms de watchlists uniques proposés au filtre.
+all_watchlist_names = sorted(
+    {name.strip() for names in df["watchlists"].dropna() for name in names.split(",") if name.strip()}
+)
+st.sidebar.header("🔍 Filtre")
+selected_watchlists = st.sidebar.multiselect(
+    "Watchlist",
+    all_watchlist_names,
+    help="Aucune sélection = toutes les watchlists confondues.",
+)
+if selected_watchlists:
+    selected_set = set(selected_watchlists)
+    df = df[
+        df["watchlists"]
+        .fillna("")
+        .apply(lambda names: bool(selected_set & {n.strip() for n in names.split(",")}))
+    ]
+
+if df.empty:
+    st.info("Aucun joueur suivi dans la/les watchlist(s) sélectionnée(s).")
+    st.stop()
+
 # --- Indicateurs clés ----------------------------------------------------
 known_price = df["floor_price_eur"].notna()
 col1, col2, col3 = st.columns(3)
@@ -63,9 +89,10 @@ if known_price.any():
     )
 
 st.caption(
-    "💡 Aucune ligne n'a de floor price si aucune vente directe Limited "
-    "in-season n'a été trouvée pour ce joueur au moment du rafraîchissement "
-    "(peu d'offres sur le marché, ou joueur pas encore in season)."
+    "💡 Aucune ligne n'a de floor price (in season ou hors saison) si "
+    "aucune vente directe Limited correspondante n'a été trouvée pour ce "
+    "joueur au moment du rafraîchissement (peu d'offres sur le marché, ou "
+    "joueur pas encore in season)."
 )
 
 # --- Tableau détaillé ------------------------------------------------
@@ -76,6 +103,7 @@ watchlist_columns = [
     "league",
     "floor_price_eur",
     "floor_price_trend",
+    "floor_price_off_season_eur",
     "watchlists",
 ]
 # Cartes avec un prix connu d'abord (les plus intéressantes), triées du
@@ -97,6 +125,9 @@ st.dataframe(
             "Floor price (Limited, in season)", format="%.2f €"
         ),
         "floor_price_trend": st.column_config.TextColumn("Tendance", width="small"),
+        "floor_price_off_season_eur": st.column_config.NumberColumn(
+            "Floor price (Limited, off season)", format="%.2f €"
+        ),
         "watchlists": "Watchlist(s)",
     },
 )

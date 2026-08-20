@@ -113,18 +113,37 @@ def _strict_limited_in_season_price(player_name: str, floor_data: dict) -> float
     return min(in_season_limited_prices) if in_season_limited_prices else None
 
 
+def _strict_limited_off_season_price(player_name: str, floor_data: dict) -> float | None:
+    """
+    Symétrique de `_strict_limited_in_season_price` : prix le plus bas parmi
+    les annonces Limited ET hors-saison UNIQUEMENT — aucun repli sur une
+    autre rareté ou sur de l'in-season. Affiché à titre indicatif à côté du
+    floor price in-season (souvent bien moins cher, utile pour comparer).
+    """
+    entries = floor_data.get(player_name, [])
+    off_season_limited_prices = [p for (r, _s, p, ise) in entries if r == "limited" and not ise]
+    return min(off_season_limited_prices) if off_season_limited_prices else None
+
+
 def compute_watched_floor_prices(df: pd.DataFrame, floor_data: dict) -> pd.DataFrame:
     """
-    Ajoute `floor_price_eur` à chaque ligne, en ne retenant QUE le floor
-    price Limited in-season (comme demandé : pas les autres raretés, pas
-    les cartes hors saison — voir `_strict_limited_in_season_price`).
+    Ajoute deux colonnes à chaque ligne :
+    - `floor_price_eur` : floor price Limited in-season UNIQUEMENT (comme
+      demandé au départ : pas les autres raretés, pas les cartes hors
+      saison — voir `_strict_limited_in_season_price`).
+    - `floor_price_off_season_eur` : floor price Limited hors-saison
+      UNIQUEMENT, à titre de comparaison (voir `_strict_limited_off_season_price`).
     """
     df = df.copy()
     if df.empty:
         df["floor_price_eur"] = pd.Series(dtype="float64")
+        df["floor_price_off_season_eur"] = pd.Series(dtype="float64")
         return df
 
     df["floor_price_eur"] = df["player_name"].apply(
         lambda name: _strict_limited_in_season_price(name, floor_data)
+    )
+    df["floor_price_off_season_eur"] = df["player_name"].apply(
+        lambda name: _strict_limited_off_season_price(name, floor_data)
     )
     return df
