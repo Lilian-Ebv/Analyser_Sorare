@@ -1,5 +1,5 @@
 """
-Helpers d'affichage partagés entre les pages Streamlit (app.py et
+Helpers d'affichage partagés entre les pages Streamlit (🏠_Accueil.py et
 pages/*.py) : formatage, code couleur, styles de tableau.
 """
 

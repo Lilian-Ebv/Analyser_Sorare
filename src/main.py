@@ -1,7 +1,7 @@
 """
 Point d'entrée : connexion à Sorare, récupération de toutes vos cartes
 football, et sauvegarde dans data/sorare.db (SQLite) pour l'application
-Streamlit (app.py).
+Streamlit (🏠_Accueil.py).
 
 Usage :
     python -m src.main
@@ -118,7 +118,7 @@ def main():
     db.save_watchlist_players(watched_df)
     print(f"👀 {len(watched_df)} joueur(s) de watchlist enregistré(s) dans {db.DB_FILE}")
 
-    print("   → Lancez maintenant : streamlit run app.py")
+    print("   → Lancez maintenant : streamlit run 🏠_Accueil.py")
 
     if not df.empty:
         print("\n🏆 Meilleures cartes par poste :\n")

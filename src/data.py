@@ -1,6 +1,6 @@
 """
-Chargement et préparation des données de cartes, partagés entre app.py et
-les pages additionnelles (pages/*.py) de l'app Streamlit.
+Chargement et préparation des données de cartes, partagés entre 🏠_Accueil.py
+et les pages additionnelles (pages/*.py) de l'app Streamlit.
 """
 
 import pandas as pd

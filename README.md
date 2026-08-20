@@ -65,8 +65,8 @@ sorare-analyzer/
 ## Pour aller plus loin
 
 Quelques pistes d'évolution naturelles :
-- **Interface graphique** : `streamlit run app.py` pour un dashboard cliquable
-  plutôt qu'un script en ligne de commande.
+- **Interface graphique** : `streamlit run 🏠_Accueil.py` pour un dashboard
+  cliquable plutôt qu'un script en ligne de commande.
 - **Alertes automatiques** : cron job qui vous envoie un mail/notif avant
   chaque deadline de composition si une carte performante est sur le banc.
 - **Historique de performance** : stocker les résultats dans une base SQLite

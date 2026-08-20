@@ -5,7 +5,13 @@ Les données viennent de data/sorare.db (SQLite), généré en lançant :
     python -m src.main
 
 Lancement de l'app :
-    streamlit run app.py
+    streamlit run 🏠_Accueil.py
+
+Le nom du fichier (icône + nom) contrôle l'icône et le libellé affichés
+dans la barre latérale pour cette page d'accueil, exactement comme pour les
+fichiers du dossier pages/ (voir pages/1_💰_Ventes.py, pages/2_👀_Watchlist.py) :
+Streamlit applique la même règle de nommage au script principal qu'aux
+pages secondaires.
 """
 
 import os
