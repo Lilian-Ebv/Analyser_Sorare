@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 from src import db
 from src.data import load_watchlist_players
-from src.ui import colorize_trend_column, floor_price_trend
+from src.ui import colorize_trend_column, floor_price_trend, highlight_u23_player_name
 
 load_dotenv()
 
@@ -110,12 +110,18 @@ watchlist_columns = [
 # moins cher au plus cher ; celles sans prix connu en bas.
 watchlist_table = df.sort_values(
     "floor_price_eur", ascending=True, na_position="last"
-)[watchlist_columns]
+)[watchlist_columns + ["u23_eligible"]]
 
+st.caption("🔵 Nom en bleu ciel = joueur U23 éligible.")
 st.dataframe(
-    watchlist_table.style.apply(colorize_trend_column, subset=["floor_price_trend"]),
+    watchlist_table.style.apply(colorize_trend_column, subset=["floor_price_trend"]).apply(
+        highlight_u23_player_name, axis=1
+    ),
     use_container_width=True,
     hide_index=True,
+    # `u23_eligible` reste dans le DataFrame pour le style ci-dessus mais
+    # n'apparaît pas comme colonne à part.
+    column_order=watchlist_columns,
     column_config={
         "player_name": "Joueur",
         "position": "Poste",

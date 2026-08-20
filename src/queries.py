@@ -333,6 +333,12 @@ query SearchPlayerCards($query: String!, $onSaleOnly: Boolean) {
         type
       }
       card {
+        # u23Eligible n'existe que sur le type concret Card (football), pas
+        # sur l'interface AnyCardInterface — même fragment inline que pour
+        # vos propres cartes (voir GET_USER_CARDS).
+        ... on Card {
+          u23Eligible
+        }
         anyPlayer {
           displayName
           activeClub {
@@ -436,6 +442,12 @@ query GetWatchlistPlayers($id: ID!, $cursor: String) {
               domesticLeague {
                 name
               }
+            }
+            # u23Eligible n'existe que sur le type concret Player (football),
+            # pas sur l'interface AnyPlayerInterface — même fragment inline
+            # que pour vos propres cartes (voir GET_USER_CARDS, birthDate).
+            ... on Player {
+              u23Eligible
             }
           }
         }

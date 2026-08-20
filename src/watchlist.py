@@ -26,7 +26,7 @@ def fetch_watchlist_players(client: SorareClient, watchlist_id: str) -> list[dic
     """
     Récupère tous les joueurs d'une watchlist (pagination automatique, comme
     `main.fetch_all_cards`). Retourne une liste de dicts
-    {player_name, player_slug, club, league, position}.
+    {player_name, player_slug, club, league, position, u23_eligible}.
     """
     players = []
     cursor = None
@@ -52,6 +52,7 @@ def fetch_watchlist_players(client: SorareClient, watchlist_id: str) -> list[dic
                         "name"
                     ),
                     "position": positions[0] if positions else None,
+                    "u23_eligible": player.get("u23Eligible", False),
                 }
             )
 

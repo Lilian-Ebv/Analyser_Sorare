@@ -20,7 +20,13 @@ import streamlit as st
 
 from src import db
 from src.data import load_cards
-from src.ui import colorize_by_sign_column, colorize_trend_column, floor_price_trend, format_countdown
+from src.ui import (
+    colorize_by_sign_column,
+    colorize_trend_column,
+    floor_price_trend,
+    format_countdown,
+    highlight_u23_player_name,
+)
 
 load_dotenv()
 
@@ -90,14 +96,20 @@ sale_columns = [
     "ecart_vs_floor_eur",
     "sale_end_date",
 ]
-sale_table = on_sale.sort_values("sale_price_eur", ascending=False)[sale_columns]
+sale_table = on_sale.sort_values("sale_price_eur", ascending=False)[
+    sale_columns + ["u23_eligible"]
+]
 
+st.caption("🔵 Nom en bleu ciel = joueur U23 éligible.")
 st.dataframe(
-    sale_table.style.apply(colorize_trend_column, subset=["floor_price_trend"]).apply(
-        colorize_by_sign_column, subset=["ecart_vs_floor_eur"]
-    ),
+    sale_table.style.apply(colorize_trend_column, subset=["floor_price_trend"])
+    .apply(colorize_by_sign_column, subset=["ecart_vs_floor_eur"])
+    .apply(highlight_u23_player_name, axis=1),
     use_container_width=True,
     hide_index=True,
+    # `u23_eligible` reste dans le DataFrame pour le style ci-dessus mais
+    # n'apparaît pas comme colonne à part.
+    column_order=sale_columns,
     column_config={
         "player_name": "Joueur",
         "position": "Poste",

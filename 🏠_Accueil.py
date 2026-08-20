@@ -28,7 +28,13 @@ from src.data import load_cards
 from src.floor_price import compute_floor_price, fetch_currency_rates, fetch_floor_prices_by_player
 from src.main import FETCH_RARITIES, fetch_all_cards
 from src.queries import GET_CURRENT_USER, GET_EXCHANGE_RATE, SEARCH_PLAYER_CARDS
-from src.ui import colorize_trend_column, floor_price_trend, format_countdown, highlight_sealed
+from src.ui import (
+    colorize_trend_column,
+    floor_price_trend,
+    format_countdown,
+    highlight_sealed,
+    highlight_u23_player_name,
+)
 from src.watchlist import compute_watched_floor_prices, fetch_all_watched_players
 
 load_dotenv()
@@ -180,6 +186,7 @@ def _hit_to_row(hit: dict, eth_eur_cents: float) -> dict:
         "auction_end": auction_end,
         "pack": pack_note,
         "card_slug": hit.get("slug"),
+        "u23_eligible": card.get("u23Eligible", False),
     }
 
 
@@ -355,10 +362,26 @@ if "market_search_results" in st.session_state:
             display_results["auction_end"] = pd.to_datetime(
                 display_results["auction_end"], errors="coerce", utc=True
             ).apply(format_countdown)
+            # `u23_eligible` reste dans le DataFrame (nécessaire pour le
+            # style ci-dessous) mais n'apparaît pas comme colonne à part :
+            # `column_order` limite l'affichage aux colonnes voulues.
+            market_search_visible_columns = [
+                "player_name",
+                "club",
+                "rarity",
+                "season",
+                "sale_type",
+                "price_eur",
+                "auction_end",
+                "pack",
+            ]
             st.dataframe(
-                display_results.drop(columns=["card_slug"]),
+                display_results.drop(columns=["card_slug"]).style.apply(
+                    highlight_u23_player_name, axis=1
+                ),
                 use_container_width=True,
                 hide_index=True,
+                column_order=market_search_visible_columns,
                 column_config={
                     "price_eur": st.column_config.NumberColumn("Prix", format="%.2f €"),
                     "sale_type": "Type de vente",
@@ -369,6 +392,7 @@ if "market_search_results" in st.session_state:
                     "pack": "Pack (si groupé)",
                 },
             )
+            st.caption("🔵 Nom en bleu ciel = joueur U23 éligible.")
     with st.expander("🐛 Debug : voir les données brutes de l'API"):
         st.json(st.session_state.market_search_raw)
     st.divider()
@@ -483,10 +507,11 @@ st.caption(
     "▲ vert = floor price en hausse, ▼ rouge = en baisse, ➖ gris = stable "
     "depuis le dernier rafraîchissement (bouton 🔄 ou `python -m src.main`)."
 )
+st.caption("🔵 Nom en bleu ciel = joueur U23 éligible.")
 st.dataframe(
-    main_table.style.apply(highlight_sealed, axis=1).apply(
-        colorize_trend_column, subset=["floor_price_trend"]
-    ),
+    main_table.style.apply(highlight_sealed, axis=1)
+    .apply(colorize_trend_column, subset=["floor_price_trend"])
+    .apply(highlight_u23_player_name, axis=1),
     use_container_width=True,
     hide_index=True,
     column_config={
@@ -532,26 +557,31 @@ else:
         .dt.tz_convert("Europe/Paris")
         .dt.strftime("%d/%m/%Y %H:%M")
     )
+    playing_soon_columns = [
+        "player_name",
+        "position",
+        "club",
+        "league",
+        "next_gameweek_name",
+        "next_gameweek_deadline",
+        "next_game_matchup",
+        "next_game_date",
+        "avg_score_l5",
+        "avg_score_l10",
+        "avg_score_l40",
+        "rarity",
+        "sealed",
+    ]
+    st.caption("🔵 Nom en bleu ciel = joueur U23 éligible.")
     st.dataframe(
-        display_df[
-            [
-                "player_name",
-                "position",
-                "club",
-                "league",
-                "next_gameweek_name",
-                "next_gameweek_deadline",
-                "next_game_matchup",
-                "next_game_date",
-                "avg_score_l5",
-                "avg_score_l10",
-                "avg_score_l40",
-                "rarity",
-                "sealed",
-            ]
-        ].style.apply(highlight_sealed, axis=1),
+        # `u23_eligible` reste dans le DataFrame pour le style ci-dessous
+        # mais n'apparaît pas comme colonne à part (`column_order`).
+        display_df[playing_soon_columns + ["u23_eligible"]]
+        .style.apply(highlight_sealed, axis=1)
+        .apply(highlight_u23_player_name, axis=1),
         use_container_width=True,
         hide_index=True,
+        column_order=playing_soon_columns,
         column_config={
             "league": "Championnat",
             "next_game_date": "Date du match",
@@ -567,6 +597,7 @@ else:
 
 # --- Meilleur onze suggéré ------------------------------------------
 st.subheader("🏆 Meilleures cartes par poste (dans la sélection filtrée)")
+st.caption("🔵 Nom en bleu ciel = joueur U23 éligible.")
 
 if filtered.empty:
     st.info("Aucune carte ne correspond aux filtres actuels.")
@@ -580,21 +611,23 @@ else:
             .sort_values("avg_score_l5", ascending=False)
             .head(3)
         )
+        top_columns = [
+            "player_name",
+            "club",
+            "league",
+            "rarity",
+            "avg_score_l5",
+            "avg_score_l10",
+            "avg_score_l40",
+            "eligible_leagues",
+        ]
         st.dataframe(
-            top[
-                [
-                    "player_name",
-                    "club",
-                    "league",
-                    "rarity",
-                    "avg_score_l5",
-                    "avg_score_l10",
-                    "avg_score_l40",
-                    "eligible_leagues",
-                ]
-            ],
+            # `u23_eligible` reste dans le DataFrame pour le style ci-dessous
+            # mais n'apparaît pas comme colonne à part (`column_order`).
+            top[top_columns + ["u23_eligible"]].style.apply(highlight_u23_player_name, axis=1),
             use_container_width=True,
             hide_index=True,
+            column_order=top_columns,
             column_config={
                 "league": "Championnat",
                 "avg_score_l5": st.column_config.NumberColumn("Score moyen (L5)", format="%.1f"),

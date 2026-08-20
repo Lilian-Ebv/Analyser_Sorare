@@ -35,6 +35,22 @@ def highlight_sealed(row: pd.Series) -> list[str]:
     return [color] * len(row)
 
 
+def highlight_u23_player_name(row: pd.Series) -> list[str]:
+    """
+    Colore uniquement la cellule `player_name` en bleu ciel si le joueur est
+    U23 éligible (colonne `u23_eligible`, booléenne). N'affecte aucune autre
+    cellule de la ligne — contrairement à `highlight_sealed` qui colore la
+    ligne entière, ici seule la colonne du nom est visée.
+
+    Nécessite que `u23_eligible` fasse partie du DataFrame passé à
+    `.style.apply(..., axis=1)`, même si elle n'est pas affichée (utiliser
+    `column_order` sur `st.dataframe` pour la garder disponible au style
+    sans l'afficher comme colonne à part entière).
+    """
+    color = "background-color: #cdeeff" if row.get("u23_eligible") else ""
+    return [color if col_name == "player_name" else "" for col_name in row.index]
+
+
 def floor_price_trend(row: pd.Series) -> str:
     """
     Compare le floor price actuel au précédent (colonne `floor_price_prev_eur`,

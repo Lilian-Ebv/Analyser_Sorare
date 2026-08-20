@@ -64,4 +64,11 @@ def load_watchlist_players(mtime: float | None) -> pd.DataFrame:
     if "floor_price_off_season_eur" not in df.columns:
         df["floor_price_off_season_eur"] = pd.NA
 
+    # Idem : u23_eligible est arrivé après coup. SQLite n'a pas de vrai type
+    # booléen (0/1 en pratique), on reconvertit explicitement une fois la
+    # colonne garantie présente (comme pour les cartes dans `load_cards`).
+    if "u23_eligible" not in df.columns:
+        df["u23_eligible"] = False
+    df["u23_eligible"] = df["u23_eligible"].astype(bool)
+
     return df
